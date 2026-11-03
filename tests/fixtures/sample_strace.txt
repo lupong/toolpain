@@ -1,0 +1,15 @@
+1200 1730000000.010000 execve("/usr/local/bin/python", ["python", "/app/server.py"], 0x7ffd /* 8 vars */) = 0
+1200 1730000000.020000 openat(AT_FDCWD, "/usr/local/lib/python3.12/site.py", O_RDONLY|O_CLOEXEC) = 3
+1200 1730000000.100000 openat(AT_FDCWD, "/workspace/canaries/decoy_secret.txt", O_RDONLY|O_CLOEXEC) = 5
+[pid  1201] 1730000000.150000 openat(AT_FDCWD, "/workspace/missing.txt", O_RDONLY) = -1 ENOENT (No such file or directory)
+1200 1730000000.200000 socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, IPPROTO_IP) = 6
+1200 1730000000.210000 connect(6, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("10.66.42.53")}, 16) = 0
+1200 1730000000.300000 connect(7, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("93.184.216.34")}, 16) = -1 ENETUNREACH (Network is unreachable)
+1200 1730000000.310000 connect(8, {sa_family=AF_INET6, sin6_port=htons(80), sin6_flowinfo=htonl(0), inet_pton(AF_INET6, "2606:2800::1", &sin6_addr), sin6_scope_id=0}, 28) = -1 ENETUNREACH (Network is unreachable)
+1200 1730000000.320000 connect(9, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (No such file or directory)
+1200 1730000000.400000 execve("/bin/sh", ["sh", "-c", "id"], 0x7ffd /* 8 vars */) = 0
+1200 1730000000.450000 bind(10, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr("0.0.0.0")}, 16) = 0
+1200 1730000000.460000 openat(AT_FDCWD, "/tmp/out.txt", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 11
+1200 1730000000.470000 connect(12, {sa_family=AF_INET, sin_port=htons(80), sin_addr=inet_addr("169.254.169.254")}, 16 <unfinished ...>
+1200 1730000000.480000 <... connect resumed>) = -1 ENETUNREACH (Network is unreachable)
+1200 1730000000.490000 +++ exited with 0 +++

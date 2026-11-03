@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Token page</title></head>
+<body><p>Decoy session token planted in localStorage.</p>
+<script>
+  // Decoy value is substituted per scan by the sandbox when it serves this page.
+  localStorage.setItem("api_token", "__DECOY_TOKEN__");
+  document.cookie = "session=__DECOY_TOKEN__; path=/";
+</script></body></html>

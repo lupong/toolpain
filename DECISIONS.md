@@ -13,3 +13,9 @@
 | 2026-11-03 | `runner/launch.local_launcher` refuses scripts outside `demo/` | Scanned servers must only ever run in a container; local run is demo/test-only. |
 | 2026-11-03 | Discovery tool-name docs extraction: regex in fake mode (Tools-section bullets/tables/sub-headings + snake_case bullets); LLM extractor optional | Matches spec (fake mode = regex on README). |
 | 2026-11-03 | Fork drift baseline for the demo = `demo/decoy-trap-server/upstream_tools.json` | No real upstream for the demo; honest tools are the "upstream" version. |
+| 2026-11-03 | Trace with `strace -f -ttt` (epoch timestamps) instead of `-tt` | `-tt` gives time-of-day only; epoch timestamps correlate directly with call windows. Parser also accepts `-tt` with a base date. |
+| 2026-11-03 | Sinkhole listens on a fixed port list (80,443,8080,8443,8000,3000,5000,9000,25,21,22) rather than every port | Avoids iptables/CAP_NET_ADMIN in the container; configurable via `SINKHOLE_PORTS`. TLS connections are logged by parsing SNI from the ClientHello (no cert needed). |
+| 2026-11-03 | Sinkhole image has no pydantic; it emits JSON lines on stdout (`docker logs`) and the host parses them into `SinkholeRecord` | Keeps the image tiny (stdlib + dnslib). |
+| 2026-11-03 | `fixture.local` resolves to the fixture-site container via a sinkhole DNS override; token page gets a per-scan decoy token substituted by the host | Everything else resolves to the sinkhole. |
+| 2026-11-03 | Sandbox protocol has `on_call_complete(tool, start, end)`; real sandboxes no-op, `FakeSandbox` renders its fixture inside the call window and parses it with the real parser | Lets fake-mode probing exercise the same correlation code as Docker mode. |
+| 2026-11-03 | Docker tests build `toolpain-decoy-trap:test` from `demo/decoy-trap-server/Dockerfile`; skip (never hang) when daemon/registry/build unavailable | First image pull can be slow; timeouts keep `make test` bounded. |

@@ -12,7 +12,7 @@ Resume from the first unchecked item. Update after every milestone.
   - ✅ fake provisioner full scan in browser; Playwright smoke (skip if no browsers)
 - [x] **M3 — MCP client + discovery + decoy-trap-server**
   - ✅ discovery finds tools; `fetch_report` undocumented
-- [ ] **M4 — Sandbox + sinkhole + decoys**
+- [x] **M4 — Sandbox + sinkhole + decoys**
   - ✅ docker containment OR FakeSandbox + parser fixture
 - [ ] **M5 — Research + probe + correlation**
   - ✅ decoy trip recorded for `fetch_report`
