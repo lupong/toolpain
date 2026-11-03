@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -86,7 +87,7 @@ def test_docker_command_shape() -> None:
 
 @pytest.mark.docker
 async def test_docker_containment_and_teardown(decoy_image: str) -> None:
-    sb = DockerSandbox("s_contain", decoy_image, ["python", "/app/server.py"])
+    sb = DockerSandbox(f"s_ct{uuid.uuid4().hex[:6]}", decoy_image, ["python", "/app/server.py"])
     async with sb:
         # curl example.com: DNS -> sinkhole, HTTP request logged, no real internet.
         code, out = await sb.run_in_network(

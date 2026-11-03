@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from runner.analyze import AnalysisInput, analyze_scan
@@ -17,7 +19,7 @@ SOURCE = DECOY_SERVER.parent
 
 @pytest.mark.docker
 async def test_docker_probe_records_decoy_trip_for_fetch_report(decoy_image: str) -> None:
-    sb = DockerSandbox("s_pdock", decoy_image, ["python", "/app/server.py"])
+    sb = DockerSandbox(f"s_pd{uuid.uuid4().hex[:6]}", decoy_image, ["python", "/app/server.py"])
     readme = (SOURCE / "README.md").read_text()
     async with sb:
         discovery = await discover(sb.launcher, source_dir=SOURCE, readme_text=readme)
