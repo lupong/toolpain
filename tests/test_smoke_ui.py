@@ -41,7 +41,10 @@ def test_fake_scan_and_ui_assets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
         r = client.post(
             "/api/scans",
-            json={"repo_url": "https://github.com/andrew/playwright-mcp", "demo": "decoy-trap-server"},
+            json={
+                "repo_url": "https://github.com/andrew/playwright-mcp",
+                "demo": "decoy-trap-server",
+            },
         )
         assert r.status_code == 201
         scan_id = r.json()["id"]
@@ -55,7 +58,11 @@ def test_fake_scan_and_ui_assets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             time.sleep(0.05)
         assert report is not None
         assert report["verdict"] == "flagged"
-        assert any("Report" in line for line in (web / "scan.html").read_text().splitlines() if "Report" in line)
+        assert any(
+            "Report" in line
+            for line in (web / "scan.html").read_text().splitlines()
+            if "Report" in line
+        )
 
         # Optional Playwright path — skip cleanly if browsers missing
         try:

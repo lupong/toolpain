@@ -52,7 +52,9 @@ async def reap(
     if not key:
         log.info("reaper: no VULTR_API_KEY; skip")
         return []
-    age = max_age_min if max_age_min is not None else int(os.environ.get("REAPER_MAX_AGE_MIN", "30"))
+    age = (
+        max_age_min if max_age_min is not None else int(os.environ.get("REAPER_MAX_AGE_MIN", "30"))
+    )
     cutoff = datetime.now(UTC) - timedelta(minutes=age)
     deleted: list[str] = []
     for inst in await list_toolpain_instances(key):
