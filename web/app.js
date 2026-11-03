@@ -124,9 +124,85 @@
       var m = validate(true);
       if (!m) { repo.focus(); return; }
       if (btn.disabled) return;
-      // Build agent: POST /api/scans {repo_url, ref, byo_key?} then redirect to scan.html?id=<scan_id>.
-      location.href = 'scan.html?state=in-progress&repo=' + encodeURIComponent(m[1] + '/' + m[2]);
+      var refEl = $('#ref');
+      var payload = {
+        repo_url: repo.value.trim().replace(/\/$/, ''),
+        ref: (refEl && refEl.value.trim()) || 'main'
+      };
+      var byoOn = toggle.getAttribute('aria-pressed') === 'true';
+      var vkey = $('#vkey');
+      if (byoOn && vkey && vkey.value) payload.byo_vultr_key = vkey.value;
+      btn.disabled = true;
+      fetch('/api/scans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error((j.detail && JSON.stringify(j.detail)) || 'scan failed');
+          return j;
+        });
+      }).then(function (j) {
+        location.href = 'scan.html?id=' + encodeURIComponent(j.id) + '&state=in-progress';
+      }).catch(function (ex) {
+        btn.disabled = false;
+        if (err) {
+          err.hidden = false;
+          err.textContent = String(ex.message || ex);
+        }
+      });
     });
+
+    // Demo chips → POST with demo key, then live scan view
+    $$('.tp-demo-chip').forEach(function (a) {
+      a.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        var href = a.getAttribute('href') || '';
+        var demo = (new URLSearchParams((href.split('?')[1] || ''))).get('demo');
+        if (!demo) return;
+        var demoRepos = {
+          'server-filesystem': 'https://github.com/modelcontextprotocol/servers',
+          'playwright-mcp': 'https://github.com/microsoft/playwright-mcp',
+          'decoy-trap-server': 'https://github.com/lupong/toolpain'
+        };
+        fetch('/api/scans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repo_url: demoRepos[demo] || 'https://github.com/lupong/toolpain',
+            ref: 'main',
+            demo: demo
+          })
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          var state = demo === 'server-filesystem' ? 'done' : 'in-progress';
+          location.href = 'scan.html?id=' + encodeURIComponent(j.id) + '&state=' + state + '&demo=' + encodeURIComponent(demo);
+        });
+      });
+    });
+
+    // Recent scans from API
+    var recentTable = $('#recent-table');
+    if (recentTable) {
+      fetch('/api/scans').then(function (r) { return r.json(); }).then(function (rows) {
+        if (!rows || !rows.length) return;
+        var tb = recentTable.querySelector('tbody');
+        if (!tb) return;
+        tb.textContent = '';
+        rows.slice(0, 8).forEach(function (s) {
+          var tr = document.createElement('tr');
+          var repo = (s.repo_url || '').replace('https://github.com/', '');
+          var href = 'scan.html?id=' + encodeURIComponent(s.id) + '&state=' + (s.status === 'done' ? 'done' : 'in-progress');
+          var verdict = s.verdict || s.status || 'queued';
+          var badgeClass = 'tp-verdict--' + (verdict === 'over_privileged' ? 'over' : verdict);
+          tr.innerHTML = '<td><a class="mono" href="' + href + '" style="color:var(--text);text-decoration:none">' + repo +
+            '</a></td><td><span class="tp-badge ' + badgeClass + '">' + verdict + '</span></td>' +
+            '<td class="mono">' + (s.findings_count || 0) + '</td>' +
+            '<td class="muted" style="text-align:right">' + (s.status || '') + '</td>';
+          tb.appendChild(tr);
+        });
+      }).catch(function () { /* keep sample rows */ });
+    }
+
     validate(false);
     syncByo();
   }
@@ -153,10 +229,113 @@
   $$('[data-set-state]').forEach(function (b) {
     b.addEventListener('click', function () { setState(b.getAttribute('data-set-state')); window.scrollTo(0, 0); });
   });
-  setState(params.get('state') || 'in-progress');
-
+  var scanId = params.get('id');
+  var initialState = params.get('state') || 'in-progress';
   /* ---- Elapsed timer + time-limit meter ---- */
-  var secs = 161, LIMIT = 900, paused = false;
+  var secs = scanId ? 0 : 161, LIMIT = 900, paused = false;
+  setState(initialState);
+
+  /* ---- Live scan via SSE when ?id= is present ---- */
+  var STAGE_ORDER = ['intake','provision','fetch','build','isolate','discover','research','probe','analyze','report','destroy'];
+  function markStep(stage, status) {
+    var items = $$('.tp-stepper__item');
+    var idx = STAGE_ORDER.indexOf(stage);
+    if (idx >= 0 && items[idx]) {
+      items[idx].className = 'tp-stepper__item tp-stepper__item--' + status;
+      for (var i = 0; i < idx; i++) {
+        if (items[i] && items[i].className.indexOf('--failed') < 0) {
+          items[i].className = 'tp-stepper__item tp-stepper__item--done';
+        }
+      }
+    }
+  }
+
+  function loadReport(id) {
+    return fetch('/api/scans/' + encodeURIComponent(id) + '/report')
+      .then(function (r) { if (!r.ok) throw new Error('no report'); return r.json(); })
+      .then(function (report) {
+        window.TP = window.TP || {};
+        window.TP.report = report;
+        SAMPLE_REPORT = report;
+        setState('done');
+        var chip = $('#repo-chip-live') || $('.tp-chip--repo');
+        if (chip && report.repo && report.repo.url) {
+          chip.textContent = report.repo.url.replace('https://github.com/', '');
+        }
+        var dl = $('#download-json');
+        if (dl) {
+          var blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+          dl.href = URL.createObjectURL(blob);
+          dl.download = id + '.json';
+        }
+        var cfg = $('#cfg-text');
+        if (cfg && report.least_privilege_config) {
+          cfg.textContent = JSON.stringify(report.least_privilege_config, null, 2);
+        }
+        return report;
+      });
+  }
+
+  if (scanId) {
+    window.TP = window.TP || {};
+    var sw = $('#state-switch');
+    if (sw) sw.hidden = true;
+    fetch('/api/scans/' + encodeURIComponent(scanId)).then(function (r) { return r.json(); }).then(function (s) {
+      var mode = $('#account-mode-live') || $('#account-mode');
+      if (mode) mode.textContent = s.account_mode === 'byo' ? 'your account' : 'toolpain account';
+      var idEl = $('#scan-id');
+      if (idEl) idEl.textContent = s.id;
+      if (s.status === 'done') loadReport(scanId);
+    }).catch(function () {});
+
+    if (typeof EventSource !== 'undefined') {
+      var es = new EventSource('/api/scans/' + encodeURIComponent(scanId) + '/events');
+      es.addEventListener('stage', function (ev) {
+        var data;
+        try { data = JSON.parse(ev.data); } catch (e) { return; }
+        var ts = (data.ts || '').toString();
+        if (ts.indexOf('T') >= 0) ts = ts.split('T')[1].slice(0, 8);
+        if (window.TP.appendLog) {
+          window.TP.appendLog({
+            ts: ts || '--:--:--',
+            level: data.level || 'info',
+            stage: data.stage || '',
+            msg: data.msg || ''
+          });
+        }
+        if (data.stage) markStep(data.stage, 'running');
+        if (data.level === 'alert') {
+          var t = $('#toast-decoy');
+          if (t) t.hidden = false;
+          if (window.TP.bumpEgress) window.TP.bumpEgress(1);
+        }
+        if (data.data && data.data.status === 'done') {
+          markStep('destroy', 'done');
+          loadReport(scanId);
+          es.close();
+        }
+      });
+      es.addEventListener('done', function (ev) {
+        var data = {};
+        try { data = JSON.parse(ev.data); } catch (e) {}
+        markStep('destroy', 'done');
+        if (data.status === 'done' || data.status === 'failed' || data.status === 'timeout') {
+          loadReport(scanId).catch(function () {
+            if (data.status !== 'done') setState('error');
+          });
+        }
+        es.close();
+      });
+      es.onerror = function () { /* browser will retry; ignore */ };
+    }
+
+    var cancelBtn = $('#cancel-scan');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', function () {
+        fetch('/api/scans/' + encodeURIComponent(scanId) + '/cancel', { method: 'POST' });
+      });
+    }
+  }
   var pad = function (n) { return String(n).padStart(2, '0'); };
   var fmt = function (s) { return pad(Math.floor(s / 60)) + ':' + pad(s % 60); };
   setInterval(function () {
@@ -171,9 +350,9 @@
     }
   }, 1000);
 
-  /* ---- Decoy toast ---- */
+  /* ---- Decoy toast (design preview only; live scans show via SSE alert) ---- */
   var toast = $('#toast-decoy');
-  if (toast) {
+  if (toast && !scanId) {
     setTimeout(function () { if (document.body.getAttribute('data-state') === 'in-progress') toast.hidden = false; }, 1200);
   }
   $$('[data-dismiss]').forEach(function (b) {
