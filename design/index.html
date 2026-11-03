@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ToolPain: find the tools that hurt</title>
+<meta name="description" content="ToolPain scans MCP servers in a locked-down sandbox and reports what every tool really does.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Icon sprite: <svg class="tp-icon"><use href="#i-name"/></svg> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-logo" viewBox="0 0 24 24"><path d="M2 14h4l3-8 4 13 3-9 2 4h4"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4M4 4h12l-2 4 2 4H4"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+</svg>
+
+<header class="tp-nav">
+  <div class="tp-container tp-container--narrow tp-nav__inner">
+    <a href="index.html" class="tp-wordmark">
+      <span class="tp-wordmark__mark"><svg class="tp-icon"><use href="#i-logo"/></svg></span>
+      ToolPain
+    </a>
+    <nav class="tp-nav__links" aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#recent">Recent scans</a>
+      <a href="https://github.com/">GitHub</a>
+      <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" data-theme-toggle aria-label="Switch to light theme">Light</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="tp-container tp-container--narrow tp-hero">
+    <div class="tp-hero__copy">
+      <span class="tp-eyebrow tp-eyebrow--accent">Security scanner for MCP tools</span>
+      <h1 class="tp-hero__title">Find the tools that hurt before they hurt you.</h1>
+      <p class="tp-hero__tagline">Every MCP tool, proven at runtime. Nothing leaves the sandbox.</p>
+      <p class="tp-hero__lede">Paste a GitHub link to an MCP server. ToolPain runs it on a throwaway Vultr VM with no internet, calls every tool, and reports what each one really does versus what it claims.</p>
+      <ul class="tp-promises">
+        <li><svg class="tp-icon tp-icon--sm"><use href="#i-lock"/></svg>Network blocked at runtime</li>
+        <li><svg class="tp-icon tp-icon--sm"><use href="#i-shield"/></svg>gVisor sandbox</li>
+        <li><svg class="tp-icon tp-icon--sm"><use href="#i-trash"/></svg>VM destroyed after every scan</li>
+      </ul>
+    </div>
+
+    <!-- Intake. JS: validates URL → .tp-input-wrap--valid|--error and fills #repo-chip; BYO toggle reveals [data-byo]. -->
+    <form class="tp-card tp-intake" id="intake" action="scan.html" method="get" novalidate>
+      <div class="tp-field">
+        <label for="repo" class="tp-label">GitHub repository <span class="tp-label__hint">(required)</span></label>
+        <div class="tp-input-wrap" id="repo-wrap">
+          <svg class="tp-icon"><use href="#i-link"/></svg>
+          <input id="repo" name="repo" type="url" inputmode="url" autocomplete="off" spellcheck="false" required
+                 placeholder="https://github.com/owner/repo" value="https://github.com/andrew/playwright-mcp"
+                 aria-describedby="repo-help repo-error">
+          <span class="tp-chip tp-chip--valid" id="repo-chip" hidden><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg><span></span></span>
+        </div>
+        <p class="tp-help" id="repo-help">Public repos only. Forks are compared against upstream automatically.</p>
+        <p class="tp-error-text" id="repo-error" hidden><svg class="tp-icon"><use href="#i-alert"/></svg>Use a full repo link like https://github.com/owner/repo</p>
+      </div>
+
+      <div class="tp-field">
+        <label for="ref" class="tp-label">Branch or ref <span class="tp-label__hint">(optional)</span></label>
+        <input id="ref" name="ref" class="tp-input" type="text" placeholder="main" autocomplete="off" spellcheck="false">
+      </div>
+
+      <details class="tp-disclosure">
+        <summary>Advanced <span class="tp-eyebrow" id="account-mode" style="margin-left:auto;margin-right:8px">toolpain account</span></summary>
+        <div class="tp-disclosure__body">
+          <div class="tp-row" style="justify-content:space-between;flex-wrap:nowrap;gap:16px">
+            <div>
+              <div id="byo-label" style="font-size:14px;font-weight:500">Run in my own Vultr account</div>
+              <div class="tp-help">The scanner VM is billed to you instead of toolpain.</div>
+            </div>
+            <button type="button" class="tp-toggle" id="byo-toggle" aria-pressed="false" aria-labelledby="byo-label" aria-controls="byo-panel"></button>
+          </div>
+
+          <div id="byo-panel" class="tp-stack" hidden>
+            <div class="tp-field">
+              <label for="vkey" class="tp-label">Vultr API key</label>
+              <input id="vkey" name="vultr_key" class="tp-input" type="password" autocomplete="off" placeholder="Paste a restricted key">
+            </div>
+            <div class="tp-warning" role="note">
+              <div class="tp-warning__title"><svg class="tp-icon"><use href="#i-warn"/></svg>Before you paste a key</div>
+              <ul>
+                <li>Used once for this scan, held in memory only, never stored or logged.</li>
+                <li>Vultr keys are account-wide. Anything this key can do, the scan could do.</li>
+                <li>Restrict the key to toolpain's IP in the Vultr console.</li>
+                <li>Revoke the key when the scan finishes.</li>
+              </ul>
+              <label class="tp-check"><input type="checkbox" id="byo-ack">I understand</label>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div class="tp-stack">
+        <button type="submit" class="tp-btn tp-btn--primary tp-btn--lg" id="scan-btn">
+          Scan it <svg class="tp-icon"><use href="#i-arrow-right"/></svg>
+        </button>
+        <div class="tp-stack" style="gap:10px">
+          <span class="tp-help">Try a demo</span>
+          <div class="tp-row">
+            <a class="tp-demo-chip" href="scan.html?state=done&amp;demo=server-filesystem" style="--c:var(--low)"><span class="tp-demo-chip__dot"></span>server-filesystem <span class="muted">clean</span></a>
+            <a class="tp-demo-chip" href="scan.html?state=in-progress&amp;demo=playwright-mcp" style="--c:var(--high)"><span class="tp-demo-chip__dot"></span>playwright-mcp <span class="muted">powerful</span></a>
+            <a class="tp-demo-chip" href="scan.html?state=in-progress&amp;demo=decoy-trap-server" style="--c:var(--crit)"><span class="tp-demo-chip__dot"></span>decoy-trap-server <span class="muted">flagged</span></a>
+          </div>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <section id="how" class="tp-container tp-container--narrow tp-section">
+    <h2 class="tp-eyebrow" style="margin-bottom:20px">How it works</h2>
+    <ol class="tp-how">
+      <li><span class="tp-how__n">01</span><span class="tp-how__t">Provision VM</span><span class="tp-how__d">A fresh Vultr instance, tagged toolpain, firewalled with no inbound.</span></li>
+      <li><span class="tp-how__n">02</span><span class="tp-how__t">Build</span><span class="tp-how__d">Dependencies install in a separate build stage. The only stage with network.</span></li>
+      <li><span class="tp-how__n">03</span><span class="tp-how__t">Isolate</span><span class="tp-how__d">Internal-only network, gVisor runtime, DNS sinkholed, decoys planted.</span></li>
+      <li><span class="tp-how__n">04</span><span class="tp-how__t">Probe every tool</span><span class="tp-how__d">Discover from runtime, flags, source and docs. Call each tool, trace everything.</span></li>
+      <li><span class="tp-how__n">05</span><span class="tp-how__t">Destroy VM</span><span class="tp-how__d">Report saved, instance deleted. Nothing persists.</span></li>
+    </ol>
+  </section>
+
+  <section id="recent" class="tp-container tp-container--narrow tp-section" style="padding-bottom:72px">
+    <div class="tp-section__head">
+      <h2 class="tp-eyebrow">Recent scans</h2>
+      <span class="tp-help">Public results. Reports kept 7 days.</span>
+    </div>
+    <!-- JS replaces rows from GET /api/scans; these are sample rows. Empty state lives in scan.html?state=error. -->
+    <div class="tp-table-wrap">
+      <table class="tp-table tp-table--comfy tp-table--min-560" id="recent-table">
+        <thead><tr><th scope="col">Repository</th><th scope="col">Verdict</th><th scope="col">Findings</th><th scope="col" style="text-align:right">When</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">andrew/playwright-mcp</a></td>
+            <td><span class="tp-badge tp-verdict--flagged"><svg class="tp-icon tp-icon--sm"><use href="#i-flag"/></svg>Flagged</span></td>
+            <td class="mono">3</td><td class="muted" style="text-align:right">4 min ago</td>
+          </tr>
+          <tr>
+            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">modelcontextprotocol/servers · server-filesystem</a></td>
+            <td><span class="tp-badge tp-verdict--clean"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Clean</span></td>
+            <td class="mono">0</td><td class="muted" style="text-align:right">12 min ago</td>
+          </tr>
+          <tr>
+            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">microsoft/playwright-mcp</a></td>
+            <td><span class="tp-badge tp-verdict--over"><svg class="tp-icon tp-icon--sm"><use href="#i-up"/></svg>Over-privileged</span></td>
+            <td class="mono">2</td><td class="muted" style="text-align:right">38 min ago</td>
+          </tr>
+          <tr>
+            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">toolpain/decoy-trap-server</a></td>
+            <td><span class="tp-badge tp-verdict--flagged"><svg class="tp-icon tp-icon--sm"><use href="#i-flag"/></svg>Flagged</span></td>
+            <td class="mono">4</td><td class="muted" style="text-align:right">1 hr ago</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="tp-footer">
+  <div class="tp-container tp-container--narrow tp-footer__inner">
+    <span class="mono">toolpain.com</span>
+    <span>Scans run on Vultr. Nothing leaves the sandbox.</span>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
