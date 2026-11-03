@@ -1,0 +1,46 @@
+#cloud-config
+# ToolPain scanner VM bootstrap. Placeholders replaced before base64 encoding:
+#   {{SCAN_ID}} {{REPO_URL}} {{REF}} {{TOKEN}} {{CONTROL_PLANE_URL}}
+package_update: true
+packages:
+  - docker.io
+  - python3
+  - python3-pip
+  - git
+  - curl
+
+write_files:
+  - path: /etc/toolpain/scan.env
+    permissions: "0600"
+    content: |
+      SCAN_ID={{SCAN_ID}}
+      REPO_URL={{REPO_URL}}
+      REF={{REF}}
+      TOKEN={{TOKEN}}
+      CONTROL_PLANE_URL={{CONTROL_PLANE_URL}}
+      RUNTIME=runc
+  - path: /usr/local/bin/toolpain-run.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      source /etc/toolpain/scan.env
+      cd /opt/toolpain
+      python3 -m runner.main \
+        --scan-id "$SCAN_ID" \
+        --repo-url "$REPO_URL" \
+        --ref "$REF" \
+        --token "$TOKEN" \
+        --control-plane-url "$CONTROL_PLANE_URL"
+      # Self-destruct hint for reaper if runner exits without DELETE
+      touch /tmp/toolpain-done
+
+runcmd:
+  - systemctl enable --now docker
+  - mkdir -p /opt/toolpain
+  - |
+      if [ ! -f /opt/toolpain/pyproject.toml ]; then
+        git clone --depth 1 https://github.com/lupong/toolpain.git /opt/toolpain || true
+      fi
+  - pip3 install -e /opt/toolpain || true
+  - /usr/local/bin/toolpain-run.sh || true

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from control_plane.config import get_settings
 from control_plane.db import Database
@@ -27,6 +29,27 @@ from control_plane.sample_report import DEMO_REPOS, sample_report
 log = logging.getLogger("toolpain")
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Simple per-IP rate limit for scan creation."""
+
+    def __init__(self, app: FastAPI, limit: int = 10, window_sec: int = 60) -> None:
+        super().__init__(app)
+        self.limit = limit
+        self.window = window_sec
+        self._hits: dict[str, list[float]] = {}
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        if request.method == "POST" and request.url.path == "/api/scans":
+            ip = request.client.host if request.client else "unknown"
+            now = time.time()
+            bucket = [t for t in self._hits.get(ip, []) if now - t < self.window]
+            if len(bucket) >= self.limit:
+                return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
+            bucket.append(now)
+            self._hits[ip] = bucket
+        return await call_next(request)
 
 
 class AppState:
@@ -113,6 +136,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="ToolPain", version="0.1.0", lifespan=lifespan)
+app.add_middleware(RateLimitMiddleware, limit=20, window_sec=60)
 
 
 @app.get("/api/health")
