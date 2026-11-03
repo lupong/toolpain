@@ -67,6 +67,7 @@ class StaticHit(BaseModel):
     line: int
     snippet: str = ""
     pattern: str = ""
+    context: dict[str, str] = Field(default_factory=dict)
 
 
 class DiscoveredTool(BaseModel):

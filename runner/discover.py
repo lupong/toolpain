@@ -163,12 +163,28 @@ def _iter_source_files(root: Path) -> Iterable[Path]:
         yield path
 
 
+def _module_constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level ``NAME = "string"`` assignments (hosts, paths the code refers to)."""
+    consts: dict[str, str] = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    consts[target.id] = node.value.value
+    return consts
+
+
 def _python_hits(rel: str, text: str) -> list[StaticHit]:
     hits: list[StaticHit] = []
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return _python_regex_hits(rel, text)
+    consts = _module_constants(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
@@ -184,6 +200,7 @@ def _python_hits(rel: str, text: str) -> list[StaticHit]:
                 if dec.args and isinstance(dec.args[0], ast.Constant):
                     name = str(dec.args[0].value)
             snippet = ast.get_source_segment(text, node) or ""
+            refs = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
             hits.append(
                 StaticHit(
                     name=name,
@@ -191,6 +208,7 @@ def _python_hits(rel: str, text: str) -> list[StaticHit]:
                     line=node.lineno,
                     snippet=snippet[:4000],
                     pattern="@tool",
+                    context={k: v for k, v in consts.items() if k in refs},
                 )
             )
     lines = text.splitlines()
