@@ -82,7 +82,12 @@ def decoy_scan() -> dict[str, object]:
                 upstream_tools=upstream,
             )
             analysis = analyze_scan(data)
-            report = build_report("s_fix", {"url": "https://github.com/x/y"}, data, analysis)
+            report = build_report(
+                "s_fix",
+                {"url": "https://github.com/x/y", "commit": "local", "upstream": None},
+                data,
+                analysis,
+            )
             return {
                 "discovery": discovery,
                 "profiles": profiles,
