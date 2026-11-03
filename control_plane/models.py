@@ -129,3 +129,4 @@ class Report(BaseModel):
     least_privilege_config: dict[str, Any] = Field(default_factory=dict)
     ingress: list[dict[str, Any]] = Field(default_factory=list)
     graph: dict[str, Any] | None = None
+    harness: dict[str, Any] | None = None

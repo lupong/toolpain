@@ -234,9 +234,18 @@ def _flag_args(flags: list[str]) -> tuple[str, ...]:
 
 
 async def _call_with_retry(
-    client: McpClient, tool: DiscoveredTool, fixture_url: str, timeout: float
+    client: McpClient,
+    tool: DiscoveredTool,
+    fixture_url: str,
+    timeout: float,
+    *,
+    preferred_args: dict[str, Any] | None = None,
 ) -> tuple[CallOutcome, bool]:
-    args = generate_args(tool.input_schema, fixture_url=fixture_url)
+    args = (
+        dict(preferred_args)
+        if preferred_args is not None
+        else generate_args(tool.input_schema, fixture_url=fixture_url)
+    )
     outcome = await client.call_tool(tool.name, args, timeout=timeout)
     if outcome.is_error and not outcome.timed_out and SCHEMA_ERROR_RE.search(outcome.error or ""):
         fuller = generate_args(tool.input_schema, fixture_url=fixture_url, full=True)
@@ -252,8 +261,13 @@ async def probe_tools(
     *,
     call_timeout: float = 30.0,
     sink: EventSink | None = None,
+    harness: Any | None = None,
 ) -> dict[str, ProbeResult]:
-    """Call each tool once (twice on a schema error) and return correlated observations."""
+    """Call each tool once (twice on a schema error) and return correlated observations.
+
+    When ``harness`` (a :class:`runner.harness.ProbeHarness`) is provided, preferred
+    arguments come from the LLM/fixture call plan instead of blank schema defaults.
+    """
     sink = sink or NullSink()
     groups: dict[tuple[str, ...], list[DiscoveredTool]] = defaultdict(list)
     for tool in tools:
@@ -265,9 +279,30 @@ async def probe_tools(
     for flags, group in groups.items():
         async with McpClient(launch(flags, "probe"), call_timeout=call_timeout) as client:
             for tool in group:
-                await sink.emit("probe", f"Probing {tool.name}", data={"tool": tool.name})
+                plan = harness.plan_for(tool.name) if harness is not None else None
+                if plan is not None and plan.skip:
+                    await sink.emit(
+                        "probe",
+                        f"Skipping {tool.name}: {plan.skip_reason or 'harness skip'}",
+                        data={"tool": tool.name, "skipped": True},
+                    )
+                    continue
+                preferred = None
+                if harness is not None:
+                    preferred = harness.arguments_for(
+                        tool.name, tool.input_schema, sandbox.fixture_url
+                    )
+                await sink.emit(
+                    "probe",
+                    f"Probing {tool.name}" + (" (harness args)" if preferred is not None else ""),
+                    data={"tool": tool.name, "harness": preferred is not None},
+                )
                 outcome, did_retry = await _call_with_retry(
-                    client, tool, sandbox.fixture_url, call_timeout
+                    client,
+                    tool,
+                    sandbox.fixture_url,
+                    call_timeout,
+                    preferred_args=preferred,
                 )
                 outcomes[tool.name], retried[tool.name] = outcome, did_retry
                 sandbox.on_call_complete(tool.name, outcome.start, outcome.end)

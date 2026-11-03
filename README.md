@@ -63,7 +63,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Build status: [`PROGRESS.md`
 | `PROVISIONER=local` | Runner + Docker sandbox on this machine |
 | `PROVISIONER=vultr` | Ephemeral Vultr VMs (`VULTR_API_KEY` required) |
 
-LLM calls go through the control-plane proxy to [Vultr Serverless Inference](https://api.vultrinference.com/v1). Set `LLM_MODE=fake` for deterministic fixtures.
+LLM calls go through the control-plane proxy to [Vultr Serverless Inference](https://api.vultrinference.com/v1). After discovery, ToolPain asks the model to **read the repo context and emit a probe harness** (per-tool arguments + what to watch for). The runner then exercises tools with those harness args inside the sandbox. Set `LLM_MODE=fake` for deterministic fixtures; set `LLM_MODE=live` and `VULTR_INFERENCE_API_KEY` for real harness generation.
 
 ## License
 

@@ -46,6 +46,17 @@ class FakeLlm:
 
     async def chat_json(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         text = messages[-1]["content"]
+        if "PROBE_HARNESS" in text:
+            # Harness generation short-circuits in runner.harness for FakeLlm;
+            # this branch keeps the proxy-shaped contract for direct callers.
+            from runner.harness import load_fixture_harnesses
+
+            block = load_fixture_harnesses().get("decoy-trap-server") or {}
+            return {
+                "server_summary": block.get("server_summary", "fake harness"),
+                "entrypoint_guess": block.get("entrypoint_guess"),
+                "plans": block.get("plans", []),
+            }
         match = re.search(r"TOOL_NAME: (\S+)", text)
         name = match.group(1) if match else ""
         return dict(self.fixtures.get(name, {}))

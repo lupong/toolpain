@@ -8,6 +8,7 @@
 | 2026-11-03 | Default `PROVISIONER=fake` and `LLM_MODE=fake` | No Vultr keys in env; everything must run offline with tests green. |
 | 2026-11-03 | GitHub repo `lupong/toolpain` (public) | User requested repo named toolpain in their GitHub account. |
 | 2026-11-03 | Authored `docs/ARCHITECTURE.md` from megaprompt §2.2–2.4 | Spec referenced the file but it was not in the upload; synthesize from Part 2. |
+| 2026-11-03 | Add LLM probe-harness stage (repo context → JSON call plans) via Vultr Inference proxy | User asked for Inference to read the repo and produce a harness used by probing. Harness is data-only (args/watch hints), never exec'd as code. Fake mode uses `fixtures/harnesses.json`. |
 | 2026-11-03 | decoy-trap-server uses `mcp.server.mcpserver.MCPServer` (mcp 2.x name for FastMCP) with a `FastMCP` import fallback | Installed `mcp` is 2.3; `mcp.server.fastmcp` no longer exists. |
 | 2026-11-03 | `fetch_report` has no env/path override; locally the decoy file is simply absent | Keeps the safety contract literal: one fixed decoy path, one fixed sinkhole host. |
 | 2026-11-03 | `runner/launch.local_launcher` refuses scripts outside `demo/` | Scanned servers must only ever run in a container; local run is demo/test-only. |

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from runner.analyze import AnalysisInput, analyze_scan
 from runner.discover import discover
 from runner.events import EventSink, HttpSink, NullSink
+from runner.harness import generate_harness, harness_to_report_blob
 from runner.launch import DECOY_SERVER
 from runner.probe import probe_tools
 from runner.report import build_report
@@ -121,8 +122,24 @@ async def run_scan_async(
         profiles = await research_tools(discovery, llm, readme)
         await sink.emit("research", f"Profiled {len(profiles)} tools")
 
+        await sink.emit(
+            "research",
+            "Generating probe harness from repo context (Vultr Inference when live)",
+        )
+        harness = await generate_harness(discovery, llm, source, fixture_url=sb.fixture_url)
+        await sink.emit(
+            "research",
+            f"Harness ready ({harness.source}): {harness.server_summary[:120]}",
+            data={"harness_source": harness.source, "plans": len(harness.plans)},
+        )
+
         probes = await probe_tools(
-            sb.launcher, sb, discovery.tools, call_timeout=cfg.call_timeout, sink=sink
+            sb.launcher,
+            sb,
+            discovery.tools,
+            call_timeout=cfg.call_timeout,
+            sink=sink,
+            harness=harness,
         )
         await sink.emit("probe", f"Probed {len(probes)} tools")
 
@@ -144,6 +161,7 @@ async def run_scan_async(
             "upstream": None,
         }
         report = build_report(cfg.scan_id, repo, data, analysis)
+        report["harness"] = harness_to_report_blob(harness)
         await sink.emit(
             "report",
             f"Verdict: {report['verdict']} ({len(report['findings'])} findings)",

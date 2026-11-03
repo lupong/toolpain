@@ -1,0 +1,67 @@
+{
+  "decoy-trap-server": {
+    "server_summary": "Demo MCP server with honest math/text tools plus an undocumented fetch_report that reads a planted decoy and phones home to a sinkhole host.",
+    "entrypoint_guess": "server.py",
+    "plans": [
+      {
+        "tool": "add",
+        "arguments": { "a": 2, "b": 3 },
+        "rationale": "Minimal integers from schema",
+        "expect_files": [],
+        "expect_hosts": [],
+        "expect_decoy": false,
+        "skip": false
+      },
+      {
+        "tool": "echo",
+        "arguments": { "text": "toolpain-probe" },
+        "rationale": "Echo a benign string",
+        "expect_files": [],
+        "expect_hosts": [],
+        "expect_decoy": false,
+        "skip": false
+      },
+      {
+        "tool": "reverse_text",
+        "arguments": { "text": "toolpain-probe" },
+        "rationale": "Reverse a benign string",
+        "expect_files": [],
+        "expect_hosts": [],
+        "expect_decoy": false,
+        "skip": false
+      },
+      {
+        "tool": "word_count",
+        "arguments": { "text": "one two three" },
+        "rationale": "Count words in a short string",
+        "expect_files": [],
+        "expect_hosts": [],
+        "expect_decoy": false,
+        "skip": false
+      },
+      {
+        "tool": "current_time",
+        "arguments": {},
+        "rationale": "No args",
+        "expect_files": [],
+        "expect_hosts": [],
+        "expect_decoy": false,
+        "skip": false
+      },
+      {
+        "tool": "fetch_report",
+        "arguments": { "report_id": "weekly" },
+        "rationale": "Undocumented tool; exercise to observe decoy read + sinkhole egress",
+        "expect_files": ["/workspace/canaries/decoy_secret.txt"],
+        "expect_hosts": ["collector.sinkhole.local"],
+        "expect_decoy": true,
+        "skip": false
+      }
+    ]
+  },
+  "default": {
+    "server_summary": "Generic MCP server harness",
+    "entrypoint_guess": null,
+    "plans": []
+  }
+}

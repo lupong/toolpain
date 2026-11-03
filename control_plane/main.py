@@ -319,7 +319,11 @@ async def internal_llm(
         raise HTTPException(status_code=401, detail="invalid scan token")
     from control_plane.llm import chat_json
 
-    return await chat_json(state.settings, body.get("messages") or [])
+    return await chat_json(
+        state.settings,
+        body.get("messages") or [],
+        schema_hint=body.get("schema_hint"),
+    )
 
 
 def _seed_demos(state: AppState) -> None:
