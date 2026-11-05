@@ -1400,6 +1400,7 @@
       if (panel) panel.hidden = !on;
     });
     if (focus) tab.focus();
+    if (tab.scrollIntoView) tab.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     if (tab.id === 'tab-graph') initGraph();
   }
   tabs.forEach(function (t, i) {
@@ -1616,6 +1617,11 @@
       });
       cy.fit(undefined, 28);
       var flagged = cy.nodes('.flagged');
+      if (window.matchMedia('(max-width: 720px)').matches) {
+        cy.minZoom(1);
+        var hood = flagged.length ? flagged.closedNeighborhood() : cy.elements();
+        cy.fit(hood, 16);
+      }
       var pick = flagged.length ? flagged[0] : cy.nodes()[0];
       if (pick) { pick.select(); showNode(pick.id(), pick.data('label')); }
     }
@@ -1623,6 +1629,51 @@
     requestAnimationFrame(place);
     graphDrawn = graphEpoch;
     graphEl.setAttribute('aria-label', 'Access graph for ' + ((reportNow().repo && reportNow().repo.url) || 'this scan'));
+  }
+
+  function graphChains(report) {
+    var built = graphElements(report);
+    var labels = {};
+    var outs = {};
+    built.nodes.forEach(function (node) {
+      labels[node.data.id] = node.data.label;
+      outs[node.data.id] = [];
+    });
+    built.edges.forEach(function (edge) {
+      if (!outs[edge.data.source]) outs[edge.data.source] = [];
+      outs[edge.data.source].push(edge.data.target);
+    });
+    var lines = [];
+    built.nodes.forEach(function (node) {
+      if ((node.classes || '').indexOf('tool') < 0) return;
+      var path = [labels[node.data.id] || node.data.id];
+      var seen = {};
+      seen[node.data.id] = true;
+      var cursor = node.data.id;
+      while (outs[cursor] && outs[cursor].length) {
+        var next = outs[cursor][0];
+        if (seen[next]) break;
+        seen[next] = true;
+        path.push(labels[next] || next);
+        cursor = next;
+      }
+      if (path.length > 1) lines.push(path.join(' → '));
+    });
+    return lines;
+  }
+
+  var listToggle = $('#graph-list-toggle');
+  if (listToggle) {
+    listToggle.addEventListener('click', function () {
+      var list = $('#graph-list');
+      var graphEl = $('#graph');
+      if (!list || !graphEl) return;
+      var show = list.hidden;
+      list.hidden = !show;
+      graphEl.hidden = show;
+      if (show) list.textContent = graphChains(reportNow()).join('\n') || 'No chains in this report.';
+      listToggle.textContent = show ? 'Show as graph' : 'Show as list';
+    });
   }
 
   $$('[data-zoom]').forEach(function (b) {
