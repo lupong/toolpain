@@ -103,39 +103,39 @@ def _beats(report: dict[str, Any], repo_url: str, ref: str) -> list[Beat]:
     repo = repo_url.removeprefix("https://github.com/")
     tools = list(report.get("tools") or [])
     names = [t["name"] for t in tools]
-    shown = tools[:6]
     decoys = 4
+    stage = 2.5
     beats: list[Beat] = [
-        ("intake", "info", f"Accepted {repo} @ {ref}", {"ref": ref}, 1.5),
+        ("intake", "info", f"Accepted {repo} @ {ref}", {"ref": ref}, stage),
         (
             "provision",
             "info",
             f"Instance toolpain-scan requested for {repo}",
             {},
-            3.5,
+            stage,
         ),
         (
             "provision",
             "info",
             "Instance ready · firewall group: no inbound",
             {},
-            3.0,
+            stage,
         ),
-        ("fetch", "info", f"Cloned {repo}", {"ref": ref}, 2.0),
-        ("build", "info", "Run image committed", {}, 2.5),
+        ("fetch", "info", f"Cloned {repo}", {"ref": ref}, stage),
+        ("build", "info", "Run image committed", {}, stage),
         (
             "isolate",
             "info",
             "Network blocked · internal only · DNS sinkholed",
             {"network": "blocked", "decoys": decoys},
-            3.5,
+            stage,
         ),
         (
             "isolate",
             "info",
             f"{decoys} decoys planted (file, .env, cookie, localStorage)",
             {"decoys": decoys, "network": "blocked"},
-            2.5,
+            stage,
         ),
         (
             "discover",
@@ -151,44 +151,32 @@ def _beats(report: dict[str, Any], repo_url: str, ref: str) -> list[Beat]:
                     for t in tools
                 ]
             },
-            2.0,
+            stage,
         ),
-        ("research", "info", f"Profiles ready for {len(names)} tools", {}, 2.0),
+        ("research", "info", f"Profiles ready for {len(names)} tools", {}, stage),
     ]
-    for tool in shown:
-        verdict = tool.get("verdict") or "confirmed"
-        level = "info"
-        msg = f"{tool['name']} matched its claim"
-        data: dict[str, Any] = {"tool": tool["name"], "status": verdict}
-        seconds = 1.6
-        if verdict == "flagged":
-            level = "alert"
-            host = (tool.get("egress") or ["an undeclared host"])[0]
-            msg = f"{tool['name']} read the planted decoy and tried {host}. Contained."
-            data["host"] = host
-            seconds = 5.5
-        elif verdict == "exceeds_claim":
-            level = "warn"
-            msg = f"{tool['name']} did more than its description allows"
-            seconds = 2.2
-        beats.append(("probe", level, msg, data, seconds))
-    rest = len(names) - len(shown)
-    if rest > 0:
-        beats.append(("probe", "info", f"{rest} more tools probed · claims held", {}, 1.6))
+    decoy_reads = int((report.get("stats") or {}).get("decoy_reads") or 0)
+    for tool in tools:
+        verdict = str(tool.get("verdict") or "confirmed")
+        tool_decoys = int(tool.get("decoy_reads") or 0)
+        level = "alert" if decoy_reads > 0 and tool_decoys > 0 else "info"
+        data: dict[str, Any] = {
+            "tool": tool["name"],
+            "verdict": verdict,
+            "sources": list(tool.get("sources") or []),
+            "status": verdict,
+        }
+        if level == "alert":
+            hosts = tool.get("egress") or []
+            if hosts:
+                data["host"] = hosts[0]
+        beats.append(("probe", level, f"{tool['name']} → {verdict}", data, 0.8))
     if report.get("verdict") == "clean":
-        beats.append(
-            (
-                "analyze",
-                "info",
-                "No decoy reads and no undeclared hosts",
-                {},
-                2.0,
-            )
-        )
+        beats.append(("analyze", "info", "No decoy reads and no undeclared hosts", {}, stage))
     else:
-        beats.append(("analyze", "info", "Analysis complete", {}, 2.0))
-    beats.append(("report", "info", "Report assembled", {}, 1.5))
-    beats.append(("destroy", "info", "Environment destroyed", {}, 2.0))
+        beats.append(("analyze", "info", "Analysis complete", {}, stage))
+    beats.append(("report", "info", "Report assembled", {}, stage))
+    beats.append(("destroy", "info", "Environment destroyed", {}, stage))
     return beats
 
 

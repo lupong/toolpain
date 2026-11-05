@@ -5,7 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 
-def sample_report(scan_id: str, repo_url: str | None = None) -> dict[str, Any]:
+def sample_report(
+    scan_id: str, repo_url: str | None = None, demo: str | None = None
+) -> dict[str, Any]:
+    """Return the demo report that matches ``demo``, or the flagged decoy report."""
+    if demo == "server-filesystem":
+        return filesystem_report(scan_id, repo_url)
+    if demo == "playwright-mcp":
+        return over_privileged_report(scan_id, repo_url)
     repo = repo_url or "https://github.com/andrew/playwright-mcp"
     return {
         "scan_id": scan_id,
@@ -311,9 +318,7 @@ def _tool(
 
 
 def _member_graph(label: str, tool_names: list[str]) -> dict[str, Any]:
-    nodes: list[dict[str, Any]] = [
-        {"data": {"id": "server", "label": label, "kind": "server"}}
-    ]
+    nodes: list[dict[str, Any]] = [{"data": {"id": "server", "label": label, "kind": "server"}}]
     edges: list[dict[str, Any]] = []
     for i, name in enumerate(tool_names, start=1):
         nodes.append({"data": {"id": name, "label": name, "kind": "tool", "privilege": "low"}})
@@ -342,11 +347,7 @@ def filesystem_report(scan_id: str, repo_url: str | None = None) -> dict[str, An
     """Clean official filesystem server. No Playwright tools, no undocumented tools."""
     repo = repo_url or DEMO_REPOS["server-filesystem"]["repo_url"]
     tools = [_tool(name, priv, "confirmed", claimed) for name, priv, claimed in _FS_TOOLS]
-    allow = [
-        name
-        for name, priv, _claimed in _FS_TOOLS
-        if priv == "low"
-    ]
+    allow = [name for name, priv, _claimed in _FS_TOOLS if priv == "low"]
     return {
         "scan_id": scan_id,
         "repo": {
@@ -416,9 +417,7 @@ def over_privileged_report(scan_id: str, repo_url: str | None = None) -> dict[st
             "recommendation": "Start the server with only the flags you intend to expose.",
         },
     ]
-    report["toxic_combos"] = [
-        c for c in report["toxic_combos"] if "fetch_report" not in c["tools"]
-    ]
+    report["toxic_combos"] = [c for c in report["toxic_combos"] if "fetch_report" not in c["tools"]]
     report["egress"] = {"declared": ["your-app.example"], "attempted": []}
     names = [t["name"] for t in report["tools"]]
     report["stats"] = {
@@ -439,11 +438,7 @@ def over_privileged_report(scan_id: str, repo_url: str | None = None) -> dict[st
 
 def report_for_demo(demo: str | None, scan_id: str, repo_url: str | None = None) -> dict[str, Any]:
     """Pick the seeded/fake report that matches the demo's verdict."""
-    if demo == "server-filesystem":
-        return filesystem_report(scan_id, repo_url)
-    if demo == "playwright-mcp":
-        return over_privileged_report(scan_id, repo_url)
-    return sample_report(scan_id, repo_url)
+    return sample_report(scan_id, repo_url, demo=demo)
 
 
 DEMO_REPOS = {

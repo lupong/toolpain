@@ -34,3 +34,4 @@
 | 2026-11-03 | Expand executable surface: `WORKDIR_PICK_CODE`, `next_plans` second probe round, `oracle_py` findings; optional `scan_brief` on intake as prompt context only | Repo + user-intent dynamics without a second trust domain; same AST allowlist. |
 | 2026-11-03 | `sandbox=auto` → FakeSandbox for `demo/**`, else DockerSandbox after fetch+build+LaunchPlan trial; `local_path=None` clones `repo_url` | Makes LocalProvisioner + UI able to scan real GitHub URLs. |
 | 2026-11-03 | `LLM_MODE=ollama` uses local Ollama OpenAI `/v1` (`llama3.2:latest`); Cursor's xg-ai ollama MCP was unreachable so ToolPain talks to Ollama directly via the control-plane proxy | Real local harness/profile JSON without Vultr. |
+| 2026-11-05 | Demo pacing is 2.5s per stage beat and 0.8s per tool probe when `delay_sec` is unset; tests pass a small `delay_sec` | Keeps a fake scan in the 30–45s watch window without slowing pytest. Alert events fire only for tools that actually read a decoy. |

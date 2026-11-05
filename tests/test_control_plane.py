@@ -111,6 +111,40 @@ def test_demo_reports_match_their_story() -> None:
     assert any(t["name"] == "fetch_report" for t in flagged["tools"])
 
 
+def test_demo_probe_events_match_the_story() -> None:
+    from control_plane.provisioner.fake import _beats
+    from control_plane.sample_report import sample_report
+
+    expected = {
+        "server-filesystem": "clean",
+        "playwright-mcp": "over_privileged",
+        "decoy-trap-server": "flagged",
+    }
+    for demo, verdict in expected.items():
+        report = sample_report("s_demo", demo=demo)
+        assert report["verdict"] == verdict
+        beats = _beats(report, report["repo"]["url"], "main")
+        probes = [b for b in beats if b[0] == "probe"]
+        assert len(probes) == len(report["tools"])
+        for beat in probes:
+            _stage, level, msg, data, _seconds = beat
+            assert msg == f"{data['tool']} → {data['verdict']}"
+            assert set(data) >= {"tool", "verdict", "sources"}
+            assert level == (
+                "alert"
+                if data["verdict"] == "flagged" and report["stats"]["decoy_reads"]
+                else "info"
+            )
+        alerts = [b for b in beats if b[1] == "alert"]
+        if demo == "decoy-trap-server":
+            assert len(alerts) == 1
+            assert alerts[0][3]["tool"] == "fetch_report"
+        else:
+            assert alerts == []
+        total = sum(b[4] for b in beats)
+        assert 30 <= total <= 45
+
+
 def test_filesystem_demo_scan_is_clean(client: TestClient) -> None:
     r = client.post(
         "/api/scans",
