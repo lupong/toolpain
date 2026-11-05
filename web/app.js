@@ -42,7 +42,7 @@
       flagged: ['Flagged', '#i-flag', 'tp-verdict--flagged'],
       clean: ['Clean', '#i-check', 'tp-verdict--clean'],
       over_privileged: ['Over-privileged', '#i-up', 'tp-verdict--over'],
-      suspicious: ['Suspicious', '#i-warn', 'tp-verdict--suspicious'],
+      suspicious: ['Suspicious', '#i-eye', 'tp-verdict--suspicious'],
       running: ['Running', '#i-spin', 'tp-verdict--probing'],
       queued: ['Queued', '#i-dash', 'tp-verdict--queued'],
       failed: ['Failed', '#i-x', 'tp-verdict--flagged'],
@@ -258,12 +258,22 @@
         var tb = recentTable.querySelector('tbody');
         if (!tb) return;
         tb.textContent = '';
-        rows.slice(0, 8).forEach(function (s) {
+        var seen = {};
+        var unique = [];
+        rows.forEach(function (s) {
+          var key = (s.repo_url || '') + '@' + (s.ref || 'main');
+          if (seen[key]) return;
+          seen[key] = true;
+          unique.push(s);
+        });
+        unique.slice(0, 8).forEach(function (s) {
           var tr = document.createElement('tr');
           var repoName = (s.repo_url || '').replace('https://github.com/', '');
           var view = s.status === 'done' ? 'done' : (s.status === 'failed' || s.status === 'timeout' || s.status === 'cancelled' ? 'error' : 'in-progress');
           var href = 'scan.html?id=' + encodeURIComponent(s.id) + '&state=' + view;
           var pres = verdictPresentation(s.verdict, s.status);
+          var when = relTime(s.created_at);
+          var count = String(s.findings_count || 0);
           var tdRepo = document.createElement('td');
           var link = document.createElement('a');
           link.className = 'mono';
@@ -275,12 +285,12 @@
           var tdVerdict = document.createElement('td');
           tdVerdict.appendChild(badge(pres[2], pres[1], pres[0]));
           var tdCount = document.createElement('td');
-          tdCount.className = 'mono';
-          tdCount.textContent = String(s.findings_count || 0);
+          tdCount.className = 'mono tp-recent__count';
+          tdCount.textContent = count;
           var tdWhen = document.createElement('td');
-          tdWhen.className = 'muted';
-          tdWhen.style.textAlign = 'right';
-          tdWhen.textContent = relTime(s.updated_at || s.created_at);
+          tdWhen.className = 'muted tp-recent__when';
+          tdWhen.appendChild(el('span', 'tp-recent__desk', when));
+          tdWhen.appendChild(el('span', 'tp-recent__phone', count + ' findings · ' + when));
           tr.appendChild(tdRepo);
           tr.appendChild(tdVerdict);
           tr.appendChild(tdCount);
@@ -322,7 +332,7 @@
     flagged: ['FLAGGED', '#i-flag', 'tp-badge--lg tp-verdict--flagged'],
     clean: ['CLEAN', '#i-check', 'tp-badge--lg tp-verdict--clean'],
     over_privileged: ['OVER-PRIVILEGED', '#i-up', 'tp-badge--lg tp-verdict--over'],
-    suspicious: ['SUSPICIOUS', '#i-warn', 'tp-badge--lg tp-verdict--suspicious']
+    suspicious: ['SUSPICIOUS', '#i-eye', 'tp-badge--lg tp-verdict--suspicious']
   };
   var PRIV = { critical: ['Critical', '#s-critical', 'tp-badge--critical', 4], high: ['High', '#s-high', 'tp-badge--high', 3], medium: ['Medium', '#s-medium', 'tp-badge--medium', 2], low: ['Low', '#s-low', 'tp-badge--low', 1], info: ['Info', '#s-info', 'tp-badge--info', 0] };
   var TVERDICT = { flagged: ['flagged', '#i-flag', 'tp-verdict--flagged', 4], exceeds_claim: ['exceeds claim', '#i-up', 'tp-verdict--exceeds_claim', 3], confirmed: ['confirmed', '#i-check', 'tp-verdict--confirmed', 1], not_observed: ['not observed', '#i-dash', 'tp-verdict--not_observed', 0] };
