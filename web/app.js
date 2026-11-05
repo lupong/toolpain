@@ -574,14 +574,16 @@
 
   function headline(report) {
     var findings = report.findings || [];
-    var crit = findings.filter(function (f) { return f.severity === 'critical'; }).length;
+    var tools = report.tools || [];
     if (report.verdict === 'clean') return 'No pain found.';
-    if (report.verdict === 'over_privileged') return 'More power than it claims.';
-    if (report.verdict === 'suspicious') return 'Something does not add up.';
-    if (crit === 1) return 'Ouch: 1 critical finding.';
-    if (crit > 1) return 'Ouch: ' + crit + ' critical findings.';
-    if (!findings.length) return 'Flagged.';
-    return findings.length === 1 ? 'Flagged: 1 finding.' : 'Flagged: ' + findings.length + ' findings.';
+    if (report.verdict === 'over_privileged') {
+      var extra = tools.filter(function (t) { return t.verdict === 'exceeds_claim'; }).length;
+      return 'Over-privileged: ' + extra + ' tools can do more than they claim.';
+    }
+    if (report.verdict === 'suspicious') return 'Suspicious: worth a closer look.';
+    var crit = findings.filter(function (f) { return f.severity === 'critical'; }).length;
+    var n = crit || findings.length || 1;
+    return 'Ouch: ' + n + ' critical finding' + (n === 1 ? '' : 's') + '.';
   }
 
   function lede(report) {
@@ -589,24 +591,33 @@
     var stats = report.stats || {};
     if (report.verdict === 'clean') {
       var n = stats.tools != null ? stats.tools : (report.tools || []).length;
-      return 'All ' + n + ' tools matched their claims. No decoy reads, no undeclared hosts, no undocumented tools.';
+      return 'All ' + n + ' tools did what they claimed. No decoy reads, no undeclared egress.';
     }
     var top = findings[0];
-    var parts = [];
-    if (top && top.explanation) parts.push(top.explanation);
-    else if (top && top.title) parts.push(top.title);
-    if (report.verdict === 'flagged' && report.repo && report.repo.upstream) parts.push('Upstream is ' + report.repo.upstream + '.');
-    return parts.join(' ') || 'Open the findings for the evidence.';
+    if (top && (top.explanation || top.title)) return top.explanation || top.title;
+    return 'Open the findings for the evidence.';
   }
 
   function recommendation(report) {
     var findings = report.findings || [];
     var top = findings[0];
-    if (report.verdict === 'clean') return 'Keep the least-privilege config. Nothing here needs to be blocked.';
-    if (report.verdict === 'over_privileged') return 'Drop the tools that exceed their claims, then use the least-privilege config.';
-    if (report.verdict === 'suspicious') return (top && top.recommendation) || 'Review the findings, then use the least-privilege config.';
-    if (top && top.tool) return 'Block ' + top.tool + ', then use the least-privilege config.';
-    return (top && top.recommendation) || 'Use the least-privilege config before you install this server.';
+    if (report.verdict === 'clean') {
+      return 'Safe to add. The least-privilege config is still the tightest setup.';
+    }
+    if (report.verdict === 'over_privileged') {
+      return "Use the least-privilege config to turn off tools you don't need.";
+    }
+    if (report.verdict === 'flagged') {
+      var tool = top && top.tool;
+      if (!tool) {
+        (report.tools || []).some(function (t) {
+          if (t.verdict === 'flagged') { tool = t.name; return true; }
+          return false;
+        });
+      }
+      if (tool) return 'Block ' + tool + ', then use the least-privilege config.';
+    }
+    return (top && top.recommendation) || 'Review the findings, then use the least-privilege config.';
   }
 
   function renderArtifacts(report) {
@@ -784,7 +795,7 @@
       var dur = 'VM destroyed';
       if (scan.created_at && scan.updated_at) {
         var seconds = Math.max(0, Math.round((Date.parse(scan.updated_at) - Date.parse(scan.created_at)) / 1000));
-        if (seconds >= 2) dur = fmt(seconds) + ' · VM destroyed';
+        dur = fmt(seconds) + ' · VM destroyed';
       }
       doneText.textContent = dur;
     }
@@ -796,6 +807,8 @@
     setText('#count-network', String(netRows.length));
     var drift = (repo.fork_drift || []);
     setText('#count-drift', String(drift.length));
+    var driftTab = $('#tab-drift');
+    if (driftTab) driftTab.hidden = drift.length === 0;
 
     renderTools(report.tools || []);
     renderFindings(findings);
@@ -1247,6 +1260,7 @@
   } else {
     setState(params.get('state') || 'in-progress');
     if (params.get('reason')) showError(params.get('reason'));
+    renderReport(SAMPLE_REPORT);
   }
 
   var sw = $('#state-switch');
@@ -1521,7 +1535,7 @@
       container: graphEl,
       boxSelectionEnabled: false,
       wheelSensitivity: 0.2,
-      layout: { name: 'preset' },
+      layout: { name: 'preset', fit: false },
       style: graphStyle(),
       elements: elements.nodes.concat(elements.edges)
     });
@@ -1529,16 +1543,22 @@
     function place() {
       if (!cy) return;
       cy.resize();
-      var roots = cy.$('#server');
-      cy.layout({
-        name: 'breadthfirst',
-        directed: true,
-        padding: 28,
-        spacingFactor: 1.45,
-        avoidOverlap: true,
-        animate: false,
-        roots: roots.length ? roots : undefined
-      }).run();
+      var columns = ['server', 'tool', 'cap', 'host', 'decoy'];
+      var groups = { server: [], tool: [], cap: [], host: [], decoy: [] };
+      cy.nodes().forEach(function (node) {
+        var kind = 'tool';
+        columns.forEach(function (name) { if (node.hasClass(name)) kind = name; });
+        groups[kind].push(node);
+      });
+      var x = 40;
+      columns.forEach(function (kind) {
+        var nodes = groups[kind];
+        if (!nodes.length) return;
+        nodes.forEach(function (node, index) {
+          node.position({ x: x, y: 40 + index * 72 });
+        });
+        x += 220;
+      });
       cy.fit(undefined, 28);
       var flagged = cy.nodes('.flagged');
       var pick = flagged.length ? flagged[0] : cy.nodes()[0];
