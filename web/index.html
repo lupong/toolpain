@@ -54,12 +54,6 @@
       <span class="tp-eyebrow tp-eyebrow--accent">Security scanner for MCP tools</span>
       <h1 class="tp-hero__title">Find the tools that hurt before they hurt you.</h1>
       <p class="tp-hero__tagline">Every MCP tool, proven at runtime. Nothing leaves the sandbox.</p>
-      <p class="tp-hero__lede">Paste a GitHub link to an MCP server. ToolPain runs it on a throwaway Vultr VM with no internet, calls every tool, and reports what each one really does versus what it claims.</p>
-      <ul class="tp-promises">
-        <li><svg class="tp-icon tp-icon--sm"><use href="#i-lock"/></svg>Network blocked at runtime</li>
-        <li><svg class="tp-icon tp-icon--sm"><use href="#i-shield"/></svg>gVisor sandbox</li>
-        <li><svg class="tp-icon tp-icon--sm"><use href="#i-trash"/></svg>VM destroyed after every scan</li>
-      </ul>
     </div>
 
     <!-- Intake. JS: validates URL → .tp-input-wrap--valid|--error and fills #repo-chip; BYO toggle reveals [data-byo]. -->
@@ -72,7 +66,7 @@
                  placeholder="https://github.com/owner/repo" value="https://github.com/andrew/playwright-mcp"
                  aria-describedby="repo-help repo-error">
         </div>
-        <span class="tp-chip tp-chip--valid" id="repo-chip" hidden><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg><span></span></span>
+        <span class="tp-chip tp-chip--valid tp-repo-valid" id="repo-chip" hidden><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg><span></span></span>
         <p class="tp-help" id="repo-help">Public repos only. Forks are compared against upstream automatically.</p>
         <p class="tp-error-text" id="repo-error" hidden><svg class="tp-icon"><use href="#i-alert"/></svg>Use a full repo link like https://github.com/owner/repo</p>
       </div>
@@ -154,6 +148,12 @@
         </div>
       </div>
     </form>
+    <p class="tp-hero__lede">Paste a GitHub link to an MCP server. ToolPain runs it on a throwaway Vultr VM with no internet, calls every tool, and reports what each one really does versus what it claims.</p>
+    <ul class="tp-promises">
+      <li><svg class="tp-icon tp-icon--sm"><use href="#i-lock"/></svg>Network blocked at runtime</li>
+      <li><svg class="tp-icon tp-icon--sm"><use href="#i-shield"/></svg>gVisor sandbox</li>
+      <li><svg class="tp-icon tp-icon--sm"><use href="#i-trash"/></svg>VM destroyed after every scan</li>
+    </ul>
   </section>
 
   <section id="how" class="tp-container tp-container--narrow tp-section">
