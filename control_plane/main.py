@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import secrets
+import sys
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -19,12 +22,14 @@ from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from control_plane.cli import scan_main
 from control_plane.config import get_settings
 from control_plane.db import Database
-from control_plane.models import EventIn, Report, ScanCreate, ScanSummary
+from control_plane.models import EventIn, EventOut, Report, ScanCreate, ScanSummary
 from control_plane.provisioner import get_provisioner
 from control_plane.redaction import install_redaction, redact_text
-from control_plane.sample_report import DEMO_REPOS, sample_report
+from control_plane.sample_report import DEMO_REPOS, report_for_demo
+from control_plane.share import compare_reports, sign_share, verify_share
 
 log = logging.getLogger("toolpain")
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +69,7 @@ class AppState:
             emit_event=self.emit_event,
             save_report=self.save_report,
             update_scan=self.update_scan,
+            get_scan=self.db.get_scan,
             api_key=self.settings.vultr_api_key,
             control_plane_url=self.settings.control_plane_url,
         )
@@ -141,16 +147,29 @@ app.add_middleware(RateLimitMiddleware, limit=20, window_sec=60)
 
 @app.get("/api/health")
 def health(state: AppState = Depends(get_state)) -> dict[str, Any]:
+    import os
+
     from control_plane.env_detect import detect
 
-    return {"ok": True, "env": detect().as_dict(), "provisioner": state.settings.provisioner}
+    return {
+        "ok": True,
+        "env": detect().as_dict(),
+        "provisioner": state.settings.provisioner,
+        "llm_mode": state.settings.llm_mode,
+        "codegen_mode": (os.environ.get("CODEGEN_MODE") or "llm").lower(),
+        "version": "0.3.0",
+        "supports": ["stdio", "http", "sse"],
+    }
 
 
 @app.post("/api/scans", response_model=ScanSummary, status_code=201)
 async def create_scan(
     body: ScanCreate,
     state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
 ) -> ScanSummary:
+    if x_api_token and not state.db.consume_quota(x_api_token):
+        raise HTTPException(status_code=429, detail="api token quota exceeded or unknown")
     demo = body.demo
     repo_url = body.repo_url
     ref = body.ref or "main"
@@ -164,6 +183,8 @@ async def create_scan(
     summary = state.db.create_scan(
         scan_id, repo_url, ref, token, account_mode=account_mode, demo=demo
     )
+    if x_api_token:
+        state.db.set_owner(scan_id, state.db.hash_token(x_api_token))
     state.emit_event(scan_id, "intake", "info", f"Accepted scan for {repo_url}@{ref}")
     await state.provisioner.start_scan(
         scan_id,
@@ -172,13 +193,22 @@ async def create_scan(
         token,
         byo_vultr_key=body.byo_vultr_key,
         demo=demo,
+        prefer_subdir=body.prefer_subdir,
+        scan_brief=body.scan_brief,
+        protocol=body.protocol,
+        upstream_url=body.upstream_url,
+        mcp_url=body.mcp_url,
     )
     return summary
 
 
 @app.get("/api/scans", response_model=list[ScanSummary])
-def list_scans(state: AppState = Depends(get_state)) -> list[ScanSummary]:
-    return state.db.list_scans()
+def list_scans(
+    state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
+) -> list[ScanSummary]:
+    owner = state.db.hash_token(x_api_token) if x_api_token else None
+    return state.db.list_scans(owner_hash=owner)
 
 
 @app.get("/api/scans/{scan_id}", response_model=ScanSummary)
@@ -228,10 +258,16 @@ async def scan_events(
                         for ev in state.db.list_events(scan_id, after_id=last_id):
                             last_id = ev.id
                             yield {"event": "stage", "data": ev.model_dump_json()}
+                        error, detail = _failure_from_events(state, scan_id)
                         yield {
                             "event": "done",
-                            "data": __import__("json").dumps(
-                                {"status": scan.status, "verdict": scan.verdict}
+                            "data": json.dumps(
+                                {
+                                    "status": scan.status,
+                                    "verdict": scan.verdict,
+                                    "error": error,
+                                    "detail": detail,
+                                }
                             ),
                         }
                         break
@@ -244,14 +280,83 @@ async def scan_events(
     return EventSourceResponse(gen())
 
 
-@app.get("/api/scans/{scan_id}/report")
-def get_report(scan_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+@app.get("/api/scans/{scan_id}/log", response_model=list[EventOut])
+def scan_log(scan_id: str, state: AppState = Depends(get_state)) -> list[EventOut]:
     if not state.db.get_scan(scan_id):
         raise HTTPException(status_code=404, detail="scan not found")
+    return state.db.list_events(scan_id)
+
+
+@app.get("/api/scans/{scan_id}/report")
+def get_report(
+    scan_id: str,
+    state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
+) -> dict[str, Any]:
+    if not state.db.get_scan(scan_id):
+        raise HTTPException(status_code=404, detail="scan not found")
+    owner = state.db.owner_of(scan_id)
+    if owner and state.db.hash_token(x_api_token or "") != owner:
+        raise HTTPException(status_code=403, detail="private report")
     report = state.db.get_report(scan_id)
     if not report:
         raise HTTPException(status_code=404, detail="report not ready")
     return report
+
+
+@app.post("/api/scans/{scan_id}/share")
+def share_scan(
+    scan_id: str,
+    state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
+) -> dict[str, Any]:
+    if not state.db.get_scan(scan_id):
+        raise HTTPException(status_code=404, detail="scan not found")
+    owner = state.db.owner_of(scan_id)
+    if owner and state.db.hash_token(x_api_token or "") != owner:
+        raise HTTPException(status_code=403, detail="private report")
+    token, exp = sign_share(scan_id)
+    return {"token": token, "expires_at": exp, "url": f"/share/{token}"}
+
+
+@app.get("/share/{token}")
+def shared_report(token: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+    scan_id = verify_share(token)
+    if not scan_id:
+        raise HTTPException(status_code=404, detail="share link invalid or expired")
+    report = state.db.get_report(scan_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="report not ready")
+    return report
+
+
+@app.get("/api/compare")
+def compare_scans(
+    a: str,
+    b: str,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    left = state.db.get_report(a)
+    right = state.db.get_report(b)
+    if not left or not right:
+        raise HTTPException(status_code=404, detail="both reports must exist")
+    return compare_reports(left, right)
+
+
+@app.post("/api/tokens")
+def issue_token(
+    body: dict[str, Any],
+    state: AppState = Depends(get_state),
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+) -> dict[str, Any]:
+    expected = os.environ.get("TOOLPAIN_ADMIN_TOKEN") or "toolpain-dev-admin"
+    if x_admin_token != expected:
+        raise HTTPException(status_code=401, detail="admin token required")
+    token = secrets.token_urlsafe(24)
+    label = str(body.get("label") or "token")[:80]
+    quota = int(body.get("quota") or 20)
+    state.db.issue_api_token(token, label, quota)
+    return {"token": token, "label": label, "quota": quota}
 
 
 @app.post("/api/scans/{scan_id}/cancel", status_code=202)
@@ -326,6 +431,19 @@ async def internal_llm(
     )
 
 
+def _failure_from_events(state: AppState, scan_id: str) -> tuple[str | None, str | None]:
+    """Last classified failure on a scan, if the runner recorded one."""
+    error = None
+    detail = None
+    for ev in reversed(state.db.list_events(scan_id)):
+        data = ev.data or {}
+        if data.get("error"):
+            return str(data["error"]), ev.msg
+        if ev.level == "alert" and ev.msg.lower().startswith("scan failed"):
+            detail = ev.msg
+    return error, detail
+
+
 def _seed_demos(state: AppState) -> None:
     """Seed three demo scans with reports if DB is empty."""
     if state.db.list_scans(limit=1):
@@ -341,22 +459,7 @@ def _seed_demos(state: AppState) -> None:
             account_mode="toolpain",
             demo=demo_key,
         )
-        report = sample_report(scan_id, meta["repo_url"])
-        if demo_key == "server-filesystem":
-            report["verdict"] = "clean"
-            report["findings"] = []
-            report["stats"]["decoy_reads"] = 0
-            report["stats"]["egress_attempted"] = 0
-            report["tools"] = [t for t in report["tools"] if t["name"] != "fetch_report"]
-            report["toxic_combos"] = []
-        elif demo_key == "playwright-mcp":
-            report["verdict"] = "over_privileged"
-            report["findings"] = [f for f in report["findings"] if f["id"] != "F1"]
-            report["stats"]["decoy_reads"] = 0
-            for t in report["tools"]:
-                if t["name"] == "fetch_report":
-                    t["verdict"] = "exceeds_claim"
-                    t["decoy_reads"] = 0
+        report = report_for_demo(demo_key, scan_id, meta["repo_url"])
         state.save_report(scan_id, report)
         state.update_scan(
             scan_id,
@@ -409,6 +512,9 @@ async def validation_exception_handler(request: Request, exc: ValidationError) -
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "scan":
+        scan_main(sys.argv[2:])
+        return
     import uvicorn
 
     uvicorn.run(

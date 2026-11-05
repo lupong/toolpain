@@ -1,0 +1,12 @@
+# Packaged ToolPain build template — DO NOT generate this file with an LLM.
+# Placeholders are substituted from an allowlisted BuildPlan only.
+FROM {{BASE_IMAGE}}
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends {{APT_PACKAGES}} \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY . /app
+RUN {{INSTALL_CMD}}
+RUN if [ -f /app/toolpain_launch.sh ]; then chmod +x /app/toolpain_launch.sh; fi
+# Default entry is the LLM-generated launch script when present (strace-wrapped at run).
+CMD ["/bin/sh", "/app/toolpain_launch.sh"]

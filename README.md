@@ -49,6 +49,21 @@ make demo
 
 This scans `demo/decoy-trap-server` end to end and shows a contained decoy trip.
 
+### Scan a real GitHub MCP server
+
+Fetch/build/launch are packaged (data-only plans + allowlisted templates). Example — official time server:
+
+```bash
+# .env: PROVISIONER=local
+make dev   # then paste https://github.com/modelcontextprotocol/servers in the UI
+# or CLI:
+python -m runner.main --scan-id s_time \
+  --repo-url https://github.com/modelcontextprotocol/servers \
+  --prefer-subdir src/time
+```
+
+`sandbox=auto` uses FakeSandbox only for `demo/**`; everything else clones, builds a strace-capable image from `runner/templates/`, trials LaunchPlan argv until MCP `initialize` succeeds, then probes inside DockerSandbox.
+
 ## Safety
 
 The only deliberately-bad test server is `demo/decoy-trap-server`. It reads **only** `/workspace/canaries/decoy_secret.txt` (planted by ToolPain) and attempts **only** `collector.sinkhole.local` (in-sandbox sinkhole). It never touches real secret paths (`~/.ssh`, `~/.aws`, browser stores) or real hosts.
@@ -63,7 +78,32 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Build status: [`PROGRESS.md`
 | `PROVISIONER=local` | Runner + Docker sandbox on this machine |
 | `PROVISIONER=vultr` | Ephemeral Vultr VMs (`VULTR_API_KEY` required) |
 
-LLM calls go through the control-plane proxy to [Vultr Serverless Inference](https://api.vultrinference.com/v1). After discovery, ToolPain asks the model to **read the repo context and emit a probe harness** (per-tool arguments + what to watch for). The runner then exercises tools with those harness args inside the sandbox. Set `LLM_MODE=fake` for deterministic fixtures; set `LLM_MODE=live` and `VULTR_INFERENCE_API_KEY` for real harness generation.
+LLM calls go through the control-plane proxy. For diverse repos the model emits **executable** scan artifacts (AST/shell-guarded):
+
+- `launch_sh` — container entrypoint only
+- `probe_py` — `build_plans()` (+ optional `next_plans()` for a second probe round)
+- `workdir_pick_py` — monorepo package selection when `prefer_subdir` is unset
+- `oracle_py` — `review_observations()` → structured findings after probing
+
+Optional **scan brief** (UI / `scan_brief` API field) is prompt context that biases those generators. Install/language recipes stay JSON; Dockerfiles stay packaged templates.
+
+| `LLM_MODE` | Backend |
+|---|---|
+| `fake` | Fixtures (default for offline tests) |
+| `openai` | OpenAI API (`OPENAI_API_KEY`, model default `gpt-4o-mini`) |
+| `ollama` | Local [Ollama](http://127.0.0.1:11434) OpenAI `/v1` (`OLLAMA_MODEL`, default `llama3.2:latest`) |
+| `live` | [Vultr Serverless Inference](https://api.vultrinference.com/v1) (`VULTR_INFERENCE_API_KEY`) |
+
+## Support matrix (v3)
+
+| Target | Status |
+|---|---|
+| Python / Node stdio MCP | Supported |
+| HTTP / SSE MCP (`protocol=http\|sse` + `mcp_url`) | Supported for an already-running endpoint |
+| Go / Rust | Bring-your-own image (`image` + `server_cmd`); otherwise `unsupported_language` |
+| gVisor | Optional when `runsc` is installed (`RUNTIME=runsc`) |
+
+Share a finished report with `POST /api/scans/{id}/share`. Compare two reports with `GET /api/compare?a=&b=`.
 
 ## License
 

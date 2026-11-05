@@ -78,6 +78,11 @@ async def test_control_plane_llm_posts_token() -> None:
 
 
 def test_build_llm_modes() -> None:
+    from runner.research import DirectOpenAILlm
+
     assert isinstance(build_llm("fake", "http://cp", "t"), FakeLlm)
     assert isinstance(build_llm("live", "http://cp", "t"), ControlPlaneLlm)
     assert isinstance(build_llm("live", None, None), FakeLlm)  # no proxy configured -> offline
+    assert isinstance(build_llm("ollama", "http://cp", "t"), ControlPlaneLlm)
+    assert isinstance(build_llm("ollama", None, None), DirectOpenAILlm)
+    assert isinstance(build_llm("openai", "http://cp", "t"), ControlPlaneLlm)

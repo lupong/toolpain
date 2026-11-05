@@ -67,6 +67,7 @@ def test_make_demo_path() -> None:
         "s_demo",
         "https://github.com/lupong/toolpain",
         local_path=DECOY,
+        sandbox="fake",
     )
     assert report["verdict"] == "flagged"
     assert any(f["type"] == "decoy_read_and_egress" for f in report["findings"])

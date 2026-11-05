@@ -124,12 +124,19 @@ Tool-level: `confirmed`, `exceeds_claim`, `not_observed`, `flagged`.
 - Events: `{ts, pid, kind: file|net|proc, detail}`
 - Correlate to tool calls by window `[call_start, call_end + 500ms]`
 
-## 7. LLM
+## 7. LLM (v2: executable codegen)
 
-- OpenAI-compatible client via Vultr Serverless Inference (`https://api.vultrinference.com/v1`)
-- Control plane proxies; runner never holds the key
-- `LLM_MODE=live|fake`; fake returns deterministic JSON fixtures
-- All outputs JSON, Pydantic-validated, one retry on parse failure
+- OpenAI-compatible client: `openai` | `ollama` | `live` (Vultr Inference) via control-plane proxy
+- Runner prefers `/internal/llm/chat` so keys stay on the control plane
+- **Executable artifacts** (AST/shell-guarded), not free host RCE:
+  - `launch_sh` — container entrypoint only
+  - `probe_py` — `build_plans` + optional `next_plans`
+  - `workdir_pick_py` — monorepo package selection
+  - `oracle_py` — `review_observations` → finding dicts
+- Optional `scan_brief` is prompt context only
+- Install/language recipes remain JSON; Dockerfiles stay packaged templates
+- `CODEGEN_MODE=heuristic|off` forces non-LLM artifacts (incident switch)
+- Fake mode / guard failure → heuristic fallback; scan should still complete
 
 ## 8. Repository layout
 

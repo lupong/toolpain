@@ -1,28 +1,39 @@
-# ToolPain Status (2026-11-03)
+# ToolPain Status (2026-11-04)
 
-## Done
+## v1 shipped
 
-- Control plane (FastAPI): scans API, SSE, SQLite, FakeProvisioner, LLM proxy stub, rate limit, BYO key memory + redaction
-- Web UI: design ported to `web/`, intake POST, SSE live view, report hooks, demo chips
-- Runner pipeline: discover (D/S/R/F) → research → probe → analyze → report
-- `demo/decoy-trap-server` with contained decoy + sinkhole trip; README omits `fetch_report`
-- FakeSandbox with recorded fixture; DockerSandbox + sinkhole/fixture images for real Docker
-- Vultr ops + reaper (respx-tested); cloud-init / nftables / Caddy deploy docs
-- `make lint`, `make test` (48 passed), `make demo` (verdict=flagged, decoy_reads=1)
+- Control plane, web UI, runner pipeline, Docker sandbox, decoy demo
+- Local OpenAI executable codegen: `launch_sh`, `probe_py`/`next_plans`, `workdir_pick`, `oracle_py`, `scan_brief`
 
-## Stubbed / gaps
+## v2 in progress / implemented locally
 
-- Live Vultr VM provision path needs real `VULTR_API_KEY` + snapshot; not exercised in CI
-- Live LLM (`LLM_MODE=live`) needs `VULTR_INFERENCE_API_KEY`
-- gVisor (`runsc`) not installed on build host — runc + strace mode documented
-- Playwright browser smoke is optional/skipped when Chromium absent
-- Docker containment tests marked `@pytest.mark.docker` (may skip if daemon busy/unavailable)
-- Fork-diff against real GitHub upstreams is shallow (local `upstream_tools.json`)
+Plan: [`docs/V2_PLAN.md`](docs/V2_PLAN.md)
 
-## How to verify
+| Milestone | Status |
+|---|---|
+| M11 Vultr cloud-init URL/brief/subdir + destroy-on-terminal | Code complete (needs live `VULTR_API_KEY` + snapshot to prove) |
+| M12 Codegen eval + `CODEGEN_MODE` kill-switch | Tests + env shipped |
+| M13 expect_* scoring + oracle merge (append-only) | Shipped |
+| M14 Artifacts panel + prefer_subdir + re-scan with brief | Shipped |
+| M15 unsupported_language clarity | Shipped (HTTP/SSE still deferred) |
+| M16 Ops: health fields, ARCHITECTURE, deploy docs | Shipped |
+| M17 Ops status chip + re-scan | Shipped |
+
+## Still needs real keys / environment
+
+- Live Vultr VM e2e (`VULTR_API_KEY` + `VULTR_SNAPSHOT_ID`) → **v3 M18 gate**
+- Optional `LLM_MODE=live` with `VULTR_INFERENCE_API_KEY`
+- gVisor snapshot bake → **v3 M24**
+
+## v3 (planned)
+
+Plan: [`docs/V3_PLAN.md`](docs/V3_PLAN.md) — multi-transport MCP, share/CI, upstream intelligence, codegen cache, multi-tenant lite.
+
+## Verify
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-make install && make lint test demo
-make dev   # http://127.0.0.1:8000 — click decoy-trap-server demo chip
+make install && make lint test
+# local openai:
+# PROVISIONER=local LLM_MODE=openai make dev
 ```

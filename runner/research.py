@@ -1,8 +1,9 @@
 """Research stage: one LLM-built profile per tool (claimed behavior, resources, risk).
 
 * ``LLM_MODE=fake`` -> :class:`FakeLlm` / fixtures, fully deterministic and offline.
+* ``LLM_MODE=ollama`` / ``local`` -> Ollama OpenAI-compatible API (direct or via control plane).
 * ``LLM_MODE=live`` -> :class:`ControlPlaneLlm`, which posts to the control-plane proxy
-  (``/internal/llm/chat``). The runner never holds the inference key.
+  (``/internal/llm/chat``). Vultr key stays on the control plane.
 
 Every LLM answer must be JSON that validates as :class:`ToolProfile`; one retry on failure,
 then a heuristic fallback so the pipeline never stalls.
@@ -11,6 +12,7 @@ then a heuristic fallback so the pipeline never stalls.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -18,6 +20,13 @@ from typing import Any, Literal, Protocol
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from control_plane.llm import (
+    _extract_json,
+    _is_executable_codegen_request,
+    _is_harness_request,
+    _is_recipe_request,
+    _is_workdir_pick_request,
+)
 from runner.models import DiscoveredTool, DiscoveryResult
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "tool_profiles.json"
@@ -83,9 +92,94 @@ def load_fixtures(path: Path = FIXTURE_PATH) -> dict[str, dict[str, Any]]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+class DirectOpenAILlm:
+    """CLI fallback: talk to an OpenAI-compatible endpoint without the control plane.
+
+    Used for ``LLM_MODE=ollama`` when scanning without a scan token (local one-shots).
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self._client = client or httpx.AsyncClient(timeout=120)
+
+    async def chat_json(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        want_harness = _is_harness_request(messages)
+        want_recipe = _is_recipe_request(messages)
+        want_exec = _is_executable_codegen_request(messages)
+        want_workdir = _is_workdir_pick_request(messages)
+        if want_harness:
+            system = (
+                "You generate SAFE MCP probe harnesses as a single JSON object. "
+                "No markdown fences. Keys: server_summary, entrypoint_guess, plans "
+                "(array of {tool, arguments, rationale, expect_files, expect_hosts, "
+                "expect_decoy, skip, skip_reason}). Never suggest reading real secret paths."
+            )
+        elif want_exec:
+            system = (
+                "You generate ToolPain executable scan artifacts as one JSON object. "
+                "Keys: launch_sh, probe_py (build_plans + optional next_plans), "
+                "oracle_py (review_observations), rationale. No markdown. "
+                "Python: no os/sys/subprocess/socket/open/eval. Honor USER_SCAN_BRIEF."
+            )
+        elif want_workdir:
+            system = (
+                "You generate a ToolPain workdir picker as one JSON object. "
+                "Keys: workdir_pick_py (def pick_workdir(candidates, tree_summary)), "
+                "rationale. No markdown. Honor USER_SCAN_BRIEF."
+            )
+        elif want_recipe:
+            system = (
+                "You choose SAFE ToolPain scan build/launch settings as one JSON object. "
+                "No markdown. Keys: language, install_argv, apt_packages, launch_candidates, "
+                "rationale. Never emit Dockerfile bodies."
+            )
+        else:
+            system = "Respond with a single JSON object only. No markdown."
+        payload = {
+            "model": self.model,
+            "temperature": 0,
+            "messages": [{"role": "system", "content": system}, *messages],
+        }
+        resp = await self._client.post(
+            f"{self.base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json=payload,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"] or "{}"
+        parsed = _extract_json(content)
+        if parsed is None:
+            raise ValueError("model did not return JSON object")
+        return parsed
+
+
 def build_llm(mode: str, control_plane_url: str | None, token: str | None) -> LlmClient:
-    if mode == "live" and control_plane_url and token:
+    mode = (mode or "fake").lower()
+    if mode in {"live", "ollama", "local", "openai"} and control_plane_url and token:
         return ControlPlaneLlm(control_plane_url, token)
+    if mode == "openai":
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            return FakeLlm()
+        return DirectOpenAILlm(
+            base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            api_key=key,
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        )
+    if mode in {"ollama", "local"}:
+        return DirectOpenAILlm(
+            base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"),
+            api_key=os.environ.get("OLLAMA_API_KEY", "ollama"),
+            model=os.environ.get("OLLAMA_MODEL", "llama3.2:latest"),
+        )
     return FakeLlm()
 
 
@@ -144,4 +238,6 @@ async def profile_tool(
 async def research_tools(
     discovery: DiscoveryResult, llm: LlmClient, readme_text: str | None = None
 ) -> dict[str, ToolProfile]:
-    return {t.name: await profile_tool(t, llm, readme_text) for t in discovery.tools}
+    cap = int(os.environ.get("TOOLPAIN_MAX_PROFILES") or "40")
+    tools = list(discovery.tools)[: max(1, cap)]
+    return {t.name: await profile_tool(t, llm, readme_text) for t in tools}

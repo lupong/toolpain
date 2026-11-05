@@ -1,10 +1,12 @@
-"""Vultr API v2 helpers (create / poll / destroy). Expanded in M8."""
+"""Vultr API v2 helpers (create / poll / destroy)."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import logging
+import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +17,36 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("toolpain.vultr")
 API = "https://api.vultr.com/v2"
+
+_SAFE_ENV_RE = re.compile(r"^[A-Za-z0-9_./:@+=%-]+$")
+
+
+def render_cloud_init(
+    template: str,
+    *,
+    scan_id: str,
+    repo_url: str,
+    ref: str,
+    token: str,
+    control_plane_url: str,
+    prefer_subdir: str | None = None,
+    scan_brief: str | None = None,
+) -> str:
+    """Substitute cloud-init placeholders. Brief is base64 to avoid YAML breakage."""
+    brief_b64 = base64.b64encode((scan_brief or "").encode()).decode() if scan_brief else ""
+    subdir = (prefer_subdir or "").strip().strip("/")
+    if subdir and (".." in subdir or not _SAFE_ENV_RE.match(subdir)):
+        subdir = ""
+    raw = (
+        template.replace("{{SCAN_ID}}", scan_id)
+        .replace("{{REPO_URL}}", repo_url)
+        .replace("{{REF}}", ref)
+        .replace("{{TOKEN}}", token)
+        .replace("{{CONTROL_PLANE_URL}}", control_plane_url)
+        .replace("{{PREFER_SUBDIR}}", subdir)
+        .replace("{{SCAN_BRIEF_B64}}", brief_b64)
+    )
+    return raw
 
 
 async def destroy_instance(api_key: str, instance_id: str) -> None:
@@ -74,22 +106,31 @@ async def provision_and_run(
     repo_url: str,
     ref: str,
     token: str,
+    prefer_subdir: str | None = None,
+    scan_brief: str | None = None,
 ) -> None:
-    """Create VM, wait for active, rely on cloud-init to run the runner, then destroy."""
+    """Create VM, wait for active + report/terminal status, then destroy."""
     key = provisioner.key_for(scan_id)
     if not key:
         raise RuntimeError("no Vultr API key")
     cloud_init = Path(__file__).resolve().parents[2] / "infra" / "cloud-init.yaml"
-    raw = cloud_init.read_text() if cloud_init.exists() else "#cloud-config\nruncmd: []\n"
-    # Inject scan params
-    raw = (
-        raw.replace("{{SCAN_ID}}", scan_id)
-        .replace("{{REPO_URL}}", repo_url)
-        .replace("{{REF}}", ref)
-        .replace("{{TOKEN}}", token)
+    template = cloud_init.read_text() if cloud_init.exists() else "#cloud-config\nruncmd: []\n"
+    control_plane_url = (
+        os.environ.get("CONTROL_PLANE_URL")
+        or getattr(provisioner, "control_plane_url", None)
+        or "http://127.0.0.1:8000"
+    )
+    raw = render_cloud_init(
+        template,
+        scan_id=scan_id,
+        repo_url=repo_url,
+        ref=ref,
+        token=token,
+        control_plane_url=control_plane_url.rstrip("/"),
+        prefer_subdir=prefer_subdir,
+        scan_brief=scan_brief,
     )
     user_data = base64.b64encode(raw.encode()).decode()
-    import os
 
     instance = await create_instance(
         key,
@@ -103,7 +144,7 @@ async def provision_and_run(
     provisioner._instances[scan_id] = instance_id
     if provisioner._emit:
         provisioner._emit(scan_id, "provision", "info", f"Created instance {instance_id}")
-    # Poll ready
+
     for _ in range(60):
         inst = await get_instance(key, instance_id)
         if inst.get("status") == "active" and inst.get("power_status") == "running":
@@ -113,16 +154,26 @@ async def provision_and_run(
         if provisioner._update_scan:
             provisioner._update_scan(scan_id, status="failed")
         await destroy_instance(key, instance_id)
+        provisioner._instances.pop(scan_id, None)
+        provisioner.pop_byo_key(scan_id)
         return
+
     if provisioner._emit:
-        provisioner._emit(scan_id, "provision", "info", "Instance active; runner via cloud-init")
-    # Wait for runner callback (report) with timeout; reaper handles orphans
+        provisioner._emit(
+            scan_id,
+            "provision",
+            "info",
+            "Instance active; runner via cloud-init",
+        )
+
+    # Wait until scan reaches a terminal status (report posted) or timeout.
     for _ in range(360):
         await asyncio.sleep(5)
-        # Destroy is caller's / reaper responsibility after report; soft wait
+        if provisioner.scan_finished(scan_id):
+            break
         if scan_id not in provisioner._instances:
             break
-    # Always destroy
+
     try:
         await destroy_instance(key, instance_id)
     finally:

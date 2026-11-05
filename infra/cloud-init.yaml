@@ -1,6 +1,7 @@
 #cloud-config
 # ToolPain scanner VM bootstrap. Placeholders replaced before base64 encoding:
 #   {{SCAN_ID}} {{REPO_URL}} {{REF}} {{TOKEN}} {{CONTROL_PLANE_URL}}
+#   {{PREFER_SUBDIR}} {{SCAN_BRIEF_B64}}
 package_update: true
 packages:
   - docker.io
@@ -18,6 +19,8 @@ write_files:
       REF={{REF}}
       TOKEN={{TOKEN}}
       CONTROL_PLANE_URL={{CONTROL_PLANE_URL}}
+      PREFER_SUBDIR={{PREFER_SUBDIR}}
+      SCAN_BRIEF_B64={{SCAN_BRIEF_B64}}
       RUNTIME=runc
   - path: /usr/local/bin/toolpain-run.sh
     permissions: "0755"
@@ -26,13 +29,28 @@ write_files:
       set -euo pipefail
       source /etc/toolpain/scan.env
       cd /opt/toolpain
+      EXTRA=()
+      if [ -n "${PREFER_SUBDIR:-}" ]; then
+        EXTRA+=(--prefer-subdir "$PREFER_SUBDIR")
+      fi
+      if [ -n "${SCAN_BRIEF_B64:-}" ]; then
+        BRIEF=$(printf '%s' "$SCAN_BRIEF_B64" | base64 -d 2>/dev/null || true)
+        if [ -n "$BRIEF" ]; then
+          EXTRA+=(--scan-brief "$BRIEF")
+        fi
+      fi
+      curl -fsS -X POST \
+        -H "X-Scan-Token: $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"stage":"provision","level":"info","msg":"Scanner VM runner starting"}' \
+        "$CONTROL_PLANE_URL/internal/scans/$SCAN_ID/events" || true
       python3 -m runner.main \
         --scan-id "$SCAN_ID" \
         --repo-url "$REPO_URL" \
         --ref "$REF" \
         --token "$TOKEN" \
-        --control-plane-url "$CONTROL_PLANE_URL"
-      # Self-destruct hint for reaper if runner exits without DELETE
+        --control-plane-url "$CONTROL_PLANE_URL" \
+        "${EXTRA[@]}"
       touch /tmp/toolpain-done
 
 runcmd:

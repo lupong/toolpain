@@ -26,6 +26,8 @@ async def test_run_scan_posts_events_and_report_with_token() -> None:
         repo_url="https://github.com/lupong/toolpain",
         token="scan-token-1",
         control_plane_url="http://cp.test",
+        local_path=Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server",
+        sandbox="fake",
     )
     report = await run_scan_async(cfg)
 
@@ -56,7 +58,12 @@ async def test_run_scan_posts_events_and_report_with_token() -> None:
 @respx.mock
 async def test_run_scan_without_token_makes_no_http_calls() -> None:
     sink = NullSink()
-    cfg = ScanConfig(scan_id="s_local", repo_url="https://github.com/lupong/toolpain")
+    cfg = ScanConfig(
+        scan_id="s_local",
+        repo_url="https://github.com/lupong/toolpain",
+        local_path=Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server",
+        sandbox="fake",
+    )
     report = await run_scan_async(cfg, sink=sink)  # respx with no routes: any HTTP call would fail
     assert report["verdict"] == "flagged"
     assert sink.reports == [report] and sink.events
@@ -71,6 +78,8 @@ async def test_control_plane_errors_do_not_kill_the_scan() -> None:
         repo_url="https://github.com/lupong/toolpain",
         token="t",
         control_plane_url="http://cp.test",
+        local_path=Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server",
+        sandbox="fake",
     )
     assert (await run_scan_async(cfg))["verdict"] == "flagged"
 
@@ -93,12 +102,11 @@ async def test_http_sink_posts_to_internal_endpoints() -> None:
 
 async def test_local_run_refused_outside_demo(tmp_path: Path) -> None:
     (tmp_path / "server.py").write_text("print('hi')")
-    cfg = ScanConfig(scan_id="s_bad", repo_url="https://github.com/a/b", local_path=tmp_path)
+    cfg = ScanConfig(
+        scan_id="s_bad",
+        repo_url="https://github.com/a/b",
+        local_path=tmp_path,
+        sandbox="fake",
+    )
     with pytest.raises(LocalLaunchRefused):
-        await run_scan_async(cfg)
-
-
-async def test_docker_sandbox_requires_image() -> None:
-    cfg = ScanConfig(scan_id="s_x", repo_url="https://github.com/a/b", sandbox="docker")
-    with pytest.raises(ValueError, match="image"):
         await run_scan_async(cfg)

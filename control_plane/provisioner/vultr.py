@@ -1,4 +1,4 @@
-"""VultrProvisioner: create/poll/delete ephemeral scanner VMs (implemented in M8)."""
+"""VultrProvisioner: create/poll/delete ephemeral scanner VMs."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from control_plane.provisioner.base import Provisioner
 
 log = logging.getLogger("toolpain.vultr")
 
+_TERMINAL = frozenset({"done", "failed", "cancelled", "timeout"})
+
 
 class VultrProvisioner(Provisioner):
     def __init__(
@@ -18,12 +20,16 @@ class VultrProvisioner(Provisioner):
         emit_event: Callable[..., Any] | None = None,
         save_report: Callable[..., Any] | None = None,
         update_scan: Callable[..., Any] | None = None,
+        get_scan: Callable[..., Any] | None = None,
+        control_plane_url: str = "http://127.0.0.1:8000",
         **kwargs: Any,
     ) -> None:
         self.api_key = api_key
         self._emit = emit_event
         self._save_report = save_report
         self._update_scan = update_scan
+        self._get_scan = get_scan
+        self.control_plane_url = control_plane_url
         self._byo_keys: dict[str, str] = {}
         self._instances: dict[str, str] = {}
 
@@ -36,6 +42,17 @@ class VultrProvisioner(Provisioner):
     def key_for(self, scan_id: str) -> str | None:
         return self._byo_keys.get(scan_id) or self.api_key
 
+    def scan_finished(self, scan_id: str) -> bool:
+        if self._get_scan is None:
+            return False
+        scan = self._get_scan(scan_id)
+        if scan is None:
+            return False
+        status = getattr(scan, "status", None) or (
+            scan.get("status") if isinstance(scan, dict) else None
+        )
+        return status in _TERMINAL
+
     async def start_scan(
         self,
         scan_id: str,
@@ -47,7 +64,6 @@ class VultrProvisioner(Provisioner):
         byo = kwargs.get("byo_vultr_key")
         if byo:
             self.store_byo_key(scan_id, byo)
-        # Real create/poll wired in M8; fall back to FakeProvisioner behavior if no key.
         if not self.key_for(scan_id):
             from control_plane.provisioner.fake import FakeProvisioner
 
@@ -66,6 +82,8 @@ class VultrProvisioner(Provisioner):
             repo_url=repo_url,
             ref=ref,
             token=token,
+            prefer_subdir=kwargs.get("prefer_subdir"),
+            scan_brief=kwargs.get("scan_brief"),
         )
 
     async def cancel_scan(self, scan_id: str) -> None:

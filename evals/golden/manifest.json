@@ -1,0 +1,17 @@
+{
+  "version": 3,
+  "cases": [
+    {
+      "name": "decoy-trap-local",
+      "repo_url": "https://github.com/lupong/toolpain",
+      "demo": "decoy-trap-server",
+      "expect_verdict": "flagged"
+    },
+    {
+      "name": "mcp-time",
+      "repo_url": "https://github.com/modelcontextprotocol/servers",
+      "prefer_subdir": "src/time",
+      "expect_launch_contains": "mcp-server-time"
+    }
+  ]
+}

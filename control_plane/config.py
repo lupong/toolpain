@@ -33,6 +33,12 @@ class Settings:
     vultr_inference_api_key: str | None
     vultr_inference_model: str | None
     vultr_inference_base_url: str
+    ollama_base_url: str
+    ollama_model: str
+    ollama_api_key: str
+    openai_api_key: str | None
+    openai_base_url: str
+    openai_model: str
     control_plane_url: str
     data_dir: Path
     scan_timeout_sec: int
@@ -60,6 +66,14 @@ def get_settings() -> Settings:
         vultr_inference_base_url=os.environ.get(
             "VULTR_INFERENCE_BASE_URL", "https://api.vultrinference.com/v1"
         ),
+        # Local Ollama (Cursor / on-machine). OpenAI-compatible /v1 endpoint.
+        ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"),
+        ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.2:latest"),
+        ollama_api_key=os.environ.get("OLLAMA_API_KEY", "ollama"),
+        # OpenAI cloud (or any OpenAI-compatible gateway).
+        openai_api_key=os.environ.get("OPENAI_API_KEY") or None,
+        openai_base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        openai_model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         control_plane_url=os.environ.get("CONTROL_PLANE_URL", "http://127.0.0.1:8000"),
         data_dir=data,
         scan_timeout_sec=int(os.environ.get("SCAN_TIMEOUT_SEC", "1800")),

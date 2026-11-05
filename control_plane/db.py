@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -70,8 +71,17 @@ class Database:
                   body TEXT NOT NULL,
                   FOREIGN KEY(scan_id) REFERENCES scans(id)
                 );
+                CREATE TABLE IF NOT EXISTS api_tokens (
+                  token_hash TEXT PRIMARY KEY,
+                  label TEXT,
+                  quota INTEGER NOT NULL,
+                  created_at TEXT NOT NULL
+                );
                 """
             )
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(scans)")}
+            if "owner_hash" not in cols:
+                conn.execute("ALTER TABLE scans ADD COLUMN owner_hash TEXT")
 
     def create_scan(
         self,
@@ -117,11 +127,15 @@ class Database:
             row = conn.execute("SELECT token FROM scans WHERE id = ?", (scan_id,)).fetchone()
         return None if not row else row["token"]
 
-    def list_scans(self, limit: int = 50) -> list[ScanSummary]:
+    def list_scans(self, limit: int = 50, owner_hash: str | None = None) -> list[ScanSummary]:
+        sql = "SELECT * FROM scans"
+        args: tuple[Any, ...] = (limit,)
+        if owner_hash:
+            sql += " WHERE owner_hash = ?"
+            args = (owner_hash, limit)
+        sql += " ORDER BY created_at DESC LIMIT ?"
         with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM scans ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = conn.execute(sql, args).fetchall()
         return [
             ScanSummary(
                 id=r["id"],
@@ -213,6 +227,42 @@ class Database:
             )
             for r in rows
         ]
+
+    @staticmethod
+    def hash_token(token: str) -> str:
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    def issue_api_token(self, token: str, label: str, quota: int) -> None:
+        now = _utcnow().isoformat()
+        with self._lock, self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO api_tokens (token_hash, label, quota, created_at) VALUES (?, ?, ?, ?)",
+                (self.hash_token(token), label, quota, now),
+            )
+
+    def consume_quota(self, token: str) -> bool:
+        digest = self.hash_token(token)
+        with self._lock, self.connect() as conn:
+            row = conn.execute(
+                "SELECT quota FROM api_tokens WHERE token_hash = ?", (digest,)
+            ).fetchone()
+            if not row or int(row["quota"]) <= 0:
+                return False
+            conn.execute(
+                "UPDATE api_tokens SET quota = quota - 1 WHERE token_hash = ?", (digest,)
+            )
+        return True
+
+    def set_owner(self, scan_id: str, owner_hash: str) -> None:
+        with self._lock, self.connect() as conn:
+            conn.execute("UPDATE scans SET owner_hash = ? WHERE id = ?", (owner_hash, scan_id))
+
+    def owner_of(self, scan_id: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT owner_hash FROM scans WHERE id = ?", (scan_id,)).fetchone()
+        if not row:
+            return None
+        return row["owner_hash"]
 
     def save_report(self, scan_id: str, report: Report | dict[str, Any], reports_dir: Path) -> None:
         body = report.model_dump() if isinstance(report, Report) else report

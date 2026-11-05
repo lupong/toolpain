@@ -1,0 +1,22 @@
+# Example: kick a ToolPain scan from CI (v3 M21).
+name: toolpain-scan
+on:
+  workflow_dispatch:
+    inputs:
+      repo_url:
+        description: GitHub repo to scan
+        required: true
+        default: https://github.com/lupong/toolpain
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create scan
+        env:
+          TOOLPAIN_URL: ${{ secrets.TOOLPAIN_URL }}
+          TOOLPAIN_API_TOKEN: ${{ secrets.TOOLPAIN_API_TOKEN }}
+        run: |
+          curl -fsS -X POST "$TOOLPAIN_URL/api/scans" \
+            -H "Content-Type: application/json" \
+            -H "X-Api-Token: $TOOLPAIN_API_TOKEN" \
+            -d "{\"repo_url\":\"${{ inputs.repo_url }}\",\"ref\":\"main\",\"protocol\":\"stdio\"}"

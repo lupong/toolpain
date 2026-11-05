@@ -20,6 +20,7 @@ def main() -> None:
         repo_url="https://github.com/lupong/toolpain",
         ref="main",
         local_path=ROOT / "demo" / "decoy-trap-server",
+        sandbox="fake",
     )
     out = ROOT / "data" / "reports" / f"{scan_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)

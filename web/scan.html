@@ -30,6 +30,8 @@
   <symbol id="i-sort" viewBox="0 0 24 24"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></symbol>
   <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/></symbol>
   <symbol id="s-critical" viewBox="0 0 24 24"><path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86z"/><path d="M12 8v4M12 16h.01"/></symbol>
   <symbol id="s-high" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
   <symbol id="s-medium" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
@@ -41,9 +43,11 @@
 <header class="tp-scanbar">
   <div class="tp-container tp-scanbar__inner">
     <a href="index.html" class="tp-wordmark" style="font-size:16px"><svg class="tp-icon tp-icon--lg" style="color:var(--accent)"><use href="#i-logo"/></svg>ToolPain</a>
-    <span class="tp-chip tp-chip--repo">andrew/playwright-mcp <span class="muted">@ main · a1b2c3d</span></span>
-    <span class="mono muted" style="font-size:12px">scan s_8f2c</span>
-    <span class="tp-badge tp-badge--outline">toolpain account</span>
+    <div class="tp-scanbar__meta">
+      <span class="tp-chip tp-chip--repo" id="repo-chip-live"><span id="repo-chip-name">andrew/playwright-mcp</span> <span class="muted" id="repo-chip-ref">@ main · a1b2c3d</span></span>
+      <span class="mono muted" id="scan-id" style="font-size:12px">scan s_8f2c</span>
+      <span class="tp-badge tp-badge--outline" id="account-mode-live">toolpain account</span>
+    </div>
     <div class="tp-scanbar__end">
       <div class="tp-segmented" role="group" aria-label="Preview state" id="state-switch">
         <button type="button" data-set-state="in-progress" aria-pressed="true">In progress</button>
@@ -51,9 +55,9 @@
         <button type="button" data-set-state="error" aria-pressed="false">Error</button>
       </div>
       <span class="tp-timer" data-when="in-progress" aria-label="Elapsed time"><svg class="tp-icon tp-icon--sm muted"><use href="#i-clock"/></svg><span id="elapsed">02:41</span></span>
-      <button type="button" class="tp-btn tp-btn--danger" data-when="in-progress">Cancel scan</button>
-      <span class="tp-timer muted" data-when="done" style="font-size:13px;font-weight:400"><svg class="tp-icon tp-icon--sm" style="color:var(--low)"><use href="#i-check"/></svg>04:12 · VM destroyed</span>
-      <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" data-theme-toggle aria-label="Switch to light theme">Light</button>
+      <button type="button" class="tp-btn tp-btn--danger" id="cancel-scan" data-when="in-progress">Cancel scan</button>
+      <span class="tp-timer muted" id="done-meta" data-when="done" style="font-size:13px;font-weight:400"><svg class="tp-icon tp-icon--sm" style="color:var(--low)"><use href="#i-check"/></svg><span id="done-meta-text">04:12 · VM destroyed</span></span>
+      <button type="button" class="tp-btn tp-btn--ghost tp-btn--icon" data-theme-toggle aria-label="Switch to light theme"><svg class="tp-icon" aria-hidden="true"><use href="#i-sun"/></svg></button>
     </div>
   </div>
 </header>
@@ -85,23 +89,23 @@
       </div>
       <div class="tp-netstatus">
         <svg class="tp-icon" style="width:28px;height:28px;color:var(--low);stroke-width:2"><use href="#i-lock"/></svg>
-        <div><div class="tp-help" style="font-size:12px">Network</div><div class="tp-netstatus__value">BLOCKED</div></div>
-        <div class="tp-netstatus__meta">tp_internal_s_8f2c<br>--internal</div>
+        <div><div class="tp-help" style="font-size:12px">Network</div><div class="tp-netstatus__value" id="net-value">BLOCKED</div></div>
+        <div class="tp-netstatus__meta" id="net-meta">tp_internal_s_8f2c<br>--internal</div>
       </div>
       <dl class="tp-dl">
         <dt>Runtime</dt><dd>gVisor (runsc)</dd>
         <dt>DNS</dt><dd>sinkhole 10.66.12.53</dd>
       </dl>
-      <div class="tp-meter" id="meter-cpu"><div class="tp-meter__head"><span>CPU</span><span>38% of 2 vCPU</span></div><div class="tp-meter__track" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow="38"><div class="tp-meter__fill" style="--pct:38%"></div></div></div>
-      <div class="tp-meter" id="meter-mem"><div class="tp-meter__head"><span>Memory</span><span>612 MB / 2 GB</span></div><div class="tp-meter__track" role="meter" aria-label="Memory" aria-valuemin="0" aria-valuemax="100" aria-valuenow="30"><div class="tp-meter__fill" style="--pct:30%"></div></div></div>
+      <div class="tp-meter" id="meter-cpu"><div class="tp-meter__head"><span>CPU</span><span id="cpu-value">38% of 2 vCPU</span></div><div class="tp-meter__track" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow="38"><div class="tp-meter__fill" id="cpu-fill" style="--pct:38%"></div></div></div>
+      <div class="tp-meter" id="meter-mem"><div class="tp-meter__head"><span>Memory</span><span id="mem-value">612 MB / 2 GB</span></div><div class="tp-meter__track" role="meter" aria-label="Memory" aria-valuemin="0" aria-valuemax="100" aria-valuenow="30"><div class="tp-meter__fill" id="mem-fill" style="--pct:30%"></div></div></div>
       <div class="tp-meter tp-meter--time" id="meter-time"><div class="tp-meter__head"><span>Time limit</span><span id="time-label">02:41 / 15:00</span></div><div class="tp-meter__track" role="meter" aria-label="Time limit" aria-valuemin="0" aria-valuemax="100" aria-valuenow="18"><div class="tp-meter__fill" id="time-fill" style="--pct:18%"></div></div></div>
       <div class="tp-counters">
-        <div class="tp-counter"><span class="tp-counter__label">Decoys planted</span><span class="tp-counter__value">4</span></div>
+        <div class="tp-counter"><span class="tp-counter__label">Decoys planted</span><span class="tp-counter__value" id="decoy-planted">4</span></div>
         <div class="tp-counter tp-counter--alert"><span class="tp-counter__label">Undeclared egress caught</span><span class="tp-counter__value" id="egress-count" aria-live="polite">2</span></div>
       </div>
       <div class="tp-stack" style="gap:8px">
         <span class="tp-help" style="font-size:12px">Caught by sinkhole</span>
-        <ul class="tp-sinkhits" style="list-style:none;margin:0;padding:0">
+        <ul class="tp-sinkhits" id="sink-list" style="list-style:none;margin:0;padding:0">
           <li>collector.sinkhole.local:443</li>
           <li>cdn.thirdparty.local:443</li>
         </ul>
@@ -111,7 +115,7 @@
     <div class="tp-split__main">
       <section class="tp-panel" aria-label="Tool discovery">
         <div class="tp-panel__head">
-          <h2 class="tp-panel__title">Tools <span class="mono muted" style="font-weight:400;font-size:13px">27 found · 6 probed</span></h2>
+          <h2 class="tp-panel__title" id="tool-heading">Tools <span class="mono muted" id="tool-heading-meta" style="font-weight:400;font-size:13px">27 found · 6 probed</span></h2>
           <span class="mono muted" style="font-size:11px">D docs · S source · R runtime · F flag</span>
         </div>
         <ul class="tp-toollist" id="toollist">
@@ -124,7 +128,7 @@
           <li class="tp-toollist__item"><span class="tp-toollist__name">browser_snapshot</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--queued"><svg class="tp-icon tp-icon--sm"><use href="#i-dash"/></svg>queued</span></span></li>
           <li class="tp-toollist__item"><span class="tp-toollist__name">browser_type</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--queued"><svg class="tp-icon tp-icon--sm"><use href="#i-dash"/></svg>queued</span></span></li>
         </ul>
-        <div class="tp-toollist__more">+ 19 more queued</div>
+        <div class="tp-toollist__more" id="tool-more">+ 19 more queued</div>
       </section>
 
       <section class="tp-panel tp-log" aria-label="Live log">
@@ -166,15 +170,17 @@
 <!-- ============ DONE (report) ============ -->
 <div data-view="done" hidden>
   <div class="tp-container">
+    <div class="tp-tabs-wrap">
     <div class="tp-tabs" role="tablist" aria-label="Report sections" id="tabs">
       <button type="button" class="tp-tab" role="tab" id="tab-summary" aria-controls="p-summary" aria-selected="true">Summary</button>
-      <button type="button" class="tp-tab" role="tab" id="tab-tools" aria-controls="p-tools" aria-selected="false" tabindex="-1">Tools <span class="tp-tab__count">27</span></button>
+      <button type="button" class="tp-tab" role="tab" id="tab-tools" aria-controls="p-tools" aria-selected="false" tabindex="-1">Tools <span class="tp-tab__count" id="count-tools">27</span></button>
       <button type="button" class="tp-tab" role="tab" id="tab-graph" aria-controls="p-graph" aria-selected="false" tabindex="-1">Access graph</button>
-      <button type="button" class="tp-tab" role="tab" id="tab-findings" aria-controls="p-findings" aria-selected="false" tabindex="-1">Findings <span class="tp-tab__count">3</span></button>
-      <button type="button" class="tp-tab" role="tab" id="tab-combos" aria-controls="p-combos" aria-selected="false" tabindex="-1">Toxic combos <span class="tp-tab__count">4</span></button>
-      <button type="button" class="tp-tab" role="tab" id="tab-network" aria-controls="p-network" aria-selected="false" tabindex="-1">Network <span class="tp-tab__count">3</span></button>
-      <button type="button" class="tp-tab" role="tab" id="tab-drift" aria-controls="p-drift" aria-selected="false" tabindex="-1">Fork drift <span class="tp-tab__count">1</span></button>
+      <button type="button" class="tp-tab" role="tab" id="tab-findings" aria-controls="p-findings" aria-selected="false" tabindex="-1">Findings <span class="tp-tab__count" id="count-findings">3</span></button>
+      <button type="button" class="tp-tab" role="tab" id="tab-combos" aria-controls="p-combos" aria-selected="false" tabindex="-1">Toxic combos <span class="tp-tab__count" id="count-combos">4</span></button>
+      <button type="button" class="tp-tab" role="tab" id="tab-network" aria-controls="p-network" aria-selected="false" tabindex="-1">Network <span class="tp-tab__count" id="count-network">3</span></button>
+      <button type="button" class="tp-tab" role="tab" id="tab-drift" aria-controls="p-drift" aria-selected="false" tabindex="-1">Fork drift <span class="tp-tab__count" id="count-drift">1</span></button>
       <button type="button" class="tp-tab" role="tab" id="tab-config" aria-controls="p-config" aria-selected="false" tabindex="-1">Least-privilege config</button>
+    </div>
     </div>
   </div>
 
@@ -183,24 +189,41 @@
     <section class="tp-tabpanel" role="tabpanel" id="p-summary" aria-labelledby="tab-summary">
       <div class="tp-split" style="align-items:stretch">
         <div class="tp-card tp-verdict-hero">
-          <span class="tp-badge tp-badge--lg tp-verdict--flagged" style="align-self:flex-start"><svg class="tp-icon"><use href="#i-flag"/></svg>FLAGGED</span>
-          <h1 class="tp-verdict-hero__title">Ouch: 1 critical finding.</h1>
-          <p class="tp-verdict-hero__text">The undocumented tool <code>fetch_report</code> read a planted decoy and tried to reach an undeclared host. The sandbox caught both. This tool is not in upstream <span class="mono">microsoft/playwright-mcp</span>.</p>
+          <span class="tp-badge tp-badge--lg tp-verdict--flagged" id="verdict-badge" style="align-self:flex-start"><svg class="tp-icon"><use href="#i-flag"/></svg>FLAGGED</span>
+          <h1 class="tp-verdict-hero__title" id="verdict-title">Ouch: 1 critical finding.</h1>
+          <p class="tp-verdict-hero__text" id="verdict-text">The undocumented tool <code>fetch_report</code> read a planted decoy and tried to reach an undeclared host. The sandbox caught both. This tool is not in upstream <span class="mono">microsoft/playwright-mcp</span>.</p>
+          <p class="tp-verdict-hero__rec" id="verdict-rec">Block fetch_report, then use the least-privilege config.</p>
           <div class="tp-row">
             <a class="tp-btn tp-btn--primary" href="#" id="download-json" download="toolpain-s_8f2c.json"><svg class="tp-icon"><use href="#i-download"/></svg>Download JSON</a>
+            <button type="button" class="tp-btn tp-btn--secondary" id="share-report" hidden>Share report</button>
+            <button type="button" class="tp-btn tp-btn--secondary" id="replay-scan" hidden><svg class="tp-icon"><use href="#i-play"/></svg>Replay</button>
             <button type="button" class="tp-btn tp-btn--secondary" data-copy-target="#cfg-text"><svg class="tp-icon"><use href="#i-copy"/></svg><span>Copy least-privilege config</span></button>
           </div>
         </div>
-        <div class="tp-panel tp-sevcounts">
+        <div class="tp-panel tp-sevcounts" id="sev-panel">
           <h2 class="tp-eyebrow">Findings by severity</h2>
-          <div class="tp-sevcount" style="--c:var(--crit)"><span class="tp-badge tp-badge--critical"><svg class="tp-icon tp-icon--sm"><use href="#s-critical"/></svg>Critical</span><span class="tp-sevcount__bar"><span style="--pct:100%"></span></span><span class="tp-sevcount__n">1</span></div>
-          <div class="tp-sevcount" style="--c:var(--high)"><span class="tp-badge tp-badge--high"><svg class="tp-icon tp-icon--sm"><use href="#s-high"/></svg>High</span><span class="tp-sevcount__bar"><span style="--pct:100%"></span></span><span class="tp-sevcount__n">1</span></div>
-          <div class="tp-sevcount" style="--c:var(--med)"><span class="tp-badge tp-badge--medium"><svg class="tp-icon tp-icon--sm"><use href="#s-medium"/></svg>Medium</span><span class="tp-sevcount__bar"><span style="--pct:100%"></span></span><span class="tp-sevcount__n">1</span></div>
-          <div class="tp-sevcount" style="--c:var(--low)"><span class="tp-badge tp-badge--low"><svg class="tp-icon tp-icon--sm"><use href="#s-low"/></svg>Low</span><span class="tp-sevcount__bar"><span style="--pct:0%"></span></span><span class="tp-sevcount__n">0</span></div>
-          <div class="tp-sevcount" style="--c:var(--sev-info)"><span class="tp-badge tp-badge--info"><svg class="tp-icon tp-icon--sm"><use href="#s-info"/></svg>Info</span><span class="tp-sevcount__bar"><span style="--pct:0%"></span></span><span class="tp-sevcount__n">0</span></div>
+          <div class="tp-sevcount" data-sev="critical" style="--c:var(--crit)"><span class="tp-badge tp-badge--critical"><svg class="tp-icon tp-icon--sm"><use href="#s-critical"/></svg>Critical</span><span class="tp-sevcount__bar"><span style="--pct:100%"></span></span><span class="tp-sevcount__n">1</span></div>
+          <div class="tp-sevcount" data-sev="high" style="--c:var(--high)"><span class="tp-badge tp-badge--high"><svg class="tp-icon tp-icon--sm"><use href="#s-high"/></svg>High</span><span class="tp-sevcount__bar"><span style="--pct:100%"></span></span><span class="tp-sevcount__n">1</span></div>
+          <div class="tp-sevcount" data-sev="medium" style="--c:var(--med)"><span class="tp-badge tp-badge--medium"><svg class="tp-icon tp-icon--sm"><use href="#s-medium"/></svg>Medium</span><span class="tp-sevcount__bar"><span style="--pct:100%"></span></span><span class="tp-sevcount__n">1</span></div>
+          <div class="tp-sevcount" data-sev="low" style="--c:var(--low)"><span class="tp-badge tp-badge--low"><svg class="tp-icon tp-icon--sm"><use href="#s-low"/></svg>Low</span><span class="tp-sevcount__bar"><span style="--pct:0%"></span></span><span class="tp-sevcount__n">0</span></div>
+          <div class="tp-sevcount" data-sev="info" style="--c:var(--sev-info)"><span class="tp-badge tp-badge--info"><svg class="tp-icon tp-icon--sm"><use href="#s-info"/></svg>Info</span><span class="tp-sevcount__bar"><span style="--pct:0%"></span></span><span class="tp-sevcount__n">0</span></div>
+          <div class="tp-topfindings" id="top-findings">
+            <h3 class="tp-eyebrow">Top findings</h3>
+            <button type="button" class="tp-topfindings__item" data-goto-tab="tab-findings"><span class="tp-badge tp-badge--critical"><svg class="tp-icon tp-icon--sm"><use href="#s-critical"/></svg>Critical</span><span>fetch_report read a planted decoy</span></button>
+            <button type="button" class="tp-topfindings__item" data-goto-tab="tab-findings"><span class="tp-badge tp-badge--high"><svg class="tp-icon tp-icon--sm"><use href="#s-high"/></svg>High</span><span>Tool not present upstream</span></button>
+            <button type="button" class="tp-topfindings__item" data-goto-tab="tab-findings"><span class="tp-badge tp-badge--medium"><svg class="tp-icon tp-icon--sm"><use href="#s-medium"/></svg>Medium</span><span>Hidden behind a capability flag</span></button>
+          </div>
         </div>
       </div>
-      <div class="tp-stats">
+      <section class="tp-panel" id="artifacts-panel" aria-label="Executable scan artifacts" hidden>
+        <div class="tp-panel__head" style="padding:12px 16px">
+          <h2 class="tp-panel__title">Executable artifacts</h2>
+          <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" id="rescan-brief" hidden>Re-scan with brief</button>
+        </div>
+        <div id="artifacts-body" class="tp-stack" style="padding:0 16px 16px;gap:10px;font-size:13px"></div>
+      </section>
+
+      <div class="tp-stats" id="stats">
         <div class="tp-stat"><span class="tp-stat__label">Tools found</span><span class="tp-stat__value">27</span></div>
         <div class="tp-stat tp-stat--high"><span class="tp-stat__label">Undocumented</span><span class="tp-stat__value">1</span></div>
         <div class="tp-stat tp-stat--critical"><span class="tp-stat__label">Critical-tier tools</span><span class="tp-stat__value">3</span></div>
@@ -208,7 +231,7 @@
         <div class="tp-stat tp-stat--critical"><span class="tp-stat__label">Undeclared egress hosts</span><span class="tp-stat__value">2</span></div>
         <div class="tp-stat tp-stat--critical tp-stat--alert"><span class="tp-stat__label">Decoy reads</span><span class="tp-stat__value">1</span></div>
       </div>
-      <div class="tp-panel tp-recap">
+      <div class="tp-panel tp-recap" id="recap">
         <span><svg class="tp-icon tp-icon--sm" style="color:var(--low)"><use href="#i-lock"/></svg>Network blocked for the whole run</span>
         <span>2 egress attempts contained by the sinkhole</span>
         <span>4 decoys planted, 1 read</span>
@@ -351,7 +374,7 @@
           </tbody>
         </table>
       </div>
-      <span class="mono muted" style="font-size:12px"><span id="tool-count">6</span> of 27 tools shown · D docs · S source · R runtime · F flag-only</span>
+      <span class="mono muted" style="font-size:12px"><span id="tool-count">6</span> of <span id="tool-total">27</span> tools shown · D docs · S source · R runtime · F flag-only</span>
     </section>
 
     <!-- Access graph (cytoscape) -->
@@ -421,7 +444,7 @@ tools/list (--caps=pdf): 27  + browser_pdf_save</pre><button type="button" class
     <!-- Toxic combos -->
     <section class="tp-tabpanel" role="tabpanel" id="p-combos" aria-labelledby="tab-combos" hidden>
       <p class="muted" style="font-size:14px;max-width:70ch">Pairs of tools that are fine alone but dangerous together, like separation-of-duties conflicts in access governance.</p>
-      <div class="tp-grid-auto">
+      <div class="tp-grid-auto" id="combo-grid">
         <article class="tp-panel tp-combo"><div class="tp-combo__head"><span class="tp-combo__risk">Exfiltration</span><span class="tp-badge tp-badge--high"><svg class="tp-icon tp-icon--sm"><use href="#s-high"/></svg>High</span></div><div class="tp-combo__pair"><span class="tp-chip">browser_file_upload</span><span class="muted" aria-label="combined with">+</span><span class="tp-chip">browser_navigate</span></div><p class="tp-combo__why">Read a local file, then submit it to any page the agent navigates to.</p></article>
         <article class="tp-panel tp-combo"><div class="tp-combo__head"><span class="tp-combo__risk">Token theft</span><span class="tp-badge tp-badge--high"><svg class="tp-icon tp-icon--sm"><use href="#s-high"/></svg>High</span></div><div class="tp-combo__pair"><span class="tp-chip">browser_evaluate</span><span class="muted" aria-label="combined with">+</span><span class="tp-chip">browser_navigate</span></div><p class="tp-combo__why">Load a logged-in page, then run script that reads its cookies or localStorage.</p></article>
         <article class="tp-panel tp-combo"><div class="tp-combo__head"><span class="tp-combo__risk">Credential harvesting</span><span class="tp-badge tp-badge--high"><svg class="tp-icon tp-icon--sm"><use href="#s-high"/></svg>High</span></div><div class="tp-combo__pair"><span class="tp-chip">fetch_report</span><span class="muted" aria-label="combined with">+</span><span class="tp-chip">browser_evaluate</span></div><p class="tp-combo__why">One tool reads secrets from disk, the other can stage them in a page.</p></article>
@@ -466,7 +489,7 @@ tools/list (--caps=pdf): 27  + browser_pdf_save</pre><button type="button" class
 
     <!-- Least-privilege config -->
     <section class="tp-tabpanel" role="tabpanel" id="p-config" aria-labelledby="tab-config" hidden style="max-width:860px">
-      <p class="muted" style="font-size:14px;line-height:1.6">Allow only the tools this server needs and the hosts it should talk to. Everything else, including <span class="mono" style="color:var(--text)">fetch_report</span> and <span class="mono" style="color:var(--text)">browser_evaluate</span>, stays off. Paste it into your agent's MCP config.</p>
+      <p class="muted" id="cfg-intro" style="font-size:14px;line-height:1.6">Allow only the tools this server needs and the hosts it should talk to. Everything else, including <span class="mono" style="color:var(--text)">fetch_report</span> and <span class="mono" style="color:var(--text)">browser_evaluate</span>, stays off. Paste it into your agent's MCP config.</p>
       <div class="tp-panel" style="overflow:hidden">
         <div class="tp-panel__head" style="padding:8px 8px 8px 12px">
           <div class="tp-segmented mono" role="group" aria-label="Format" id="cfg-format">
@@ -491,7 +514,7 @@ tools/list (--caps=pdf): 27  + browser_pdf_save</pre><button type="button" class
 
 <!-- ============ ERROR & EDGE STATES ============ -->
 <main class="tp-container" data-view="error" hidden style="padding-block:24px 64px;display:flex;flex-direction:column;gap:24px">
-  <div class="tp-banner tp-banner--partial" role="status">
+  <div class="tp-banner tp-banner--partial" data-reason="timeout" role="status" id="err-timeout">
     <svg class="tp-icon tp-icon--lg"><use href="#i-clock"/></svg>
     <div class="tp-banner__text">
       <strong>Scan timed out at 15:00. This is a partial report.</strong>
@@ -502,7 +525,7 @@ tools/list (--caps=pdf): 27  + browser_pdf_save</pre><button type="button" class
   </div>
 
   <div class="tp-states">
-    <section class="tp-panel tp-state" aria-labelledby="st-invalid">
+    <section class="tp-panel tp-state" data-reason="invalid" aria-labelledby="st-invalid">
       <span class="tp-eyebrow" id="st-invalid">Invalid repo</span>
       <div class="tp-field">
         <label for="bad-url" class="tp-label">GitHub repository</label>
@@ -511,22 +534,22 @@ tools/list (--caps=pdf): 27  + browser_pdf_save</pre><button type="button" class
       </div>
     </section>
 
-    <section class="tp-panel tp-state" aria-labelledby="st-private">
+    <section class="tp-panel tp-state" data-reason="private" aria-labelledby="st-private">
       <span class="tp-eyebrow">Private repo</span>
       <div class="tp-row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px">
         <span class="tp-state__icon"><svg class="tp-icon"><use href="#i-lock"/></svg></span>
         <div class="tp-stack" style="gap:6px">
           <h2 class="tp-state__title" id="st-private">We can't see that repo</h2>
-          <p class="tp-state__text"><span class="mono" style="color:var(--text)">acme/internal-mcp</span> is private or doesn't exist. ToolPain scans public repos only.</p>
+          <p class="tp-state__text"><span class="mono" id="err-private-name" style="color:var(--text)">acme/internal-mcp</span> is private or doesn't exist. ToolPain scans public repos only.</p>
         </div>
       </div>
       <a href="index.html" style="font-size:14px">Try another repo</a>
     </section>
 
-    <section class="tp-panel tp-state" aria-labelledby="st-build">
+    <section class="tp-panel tp-state" data-reason="build" aria-labelledby="st-build">
       <div class="tp-row" style="justify-content:space-between"><span class="tp-eyebrow">Build failed</span><span class="tp-badge tp-badge--critical mono"><svg class="tp-icon tp-icon--sm"><use href="#i-x"/></svg>stage: build</span></div>
       <h2 class="tp-state__title" id="st-build">The server didn't build, so there was nothing to probe</h2>
-      <div class="tp-code"><pre class="muted">$ npm ci
+      <div class="tp-code"><pre class="muted" id="err-build-log">$ npm ci
 npm ERR! code ERESOLVE
 npm ERR! Could not resolve dependency:
 npm ERR! peer playwright@"1.49.x"
@@ -535,7 +558,7 @@ exit 1 · 00:38</pre></div>
       <div class="tp-row"><button type="button" class="tp-btn tp-btn--secondary tp-btn--sm">Full build log</button><button type="button" class="tp-btn tp-btn--ghost tp-btn--sm">Retry with another ref</button></div>
     </section>
 
-    <section class="tp-panel tp-state" aria-labelledby="st-vm">
+    <section class="tp-panel tp-state" data-reason="vm" aria-labelledby="st-vm">
       <span class="tp-eyebrow">VM provisioning failed</span>
       <ol class="tp-stepper" style="min-width:0;padding:0">
         <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label">Intake</span></li>
@@ -544,18 +567,32 @@ exit 1 · 00:38</pre></div>
         <li class="tp-stepper__item tp-stepper__item--skipped"><span class="tp-stepper__bar"></span><span class="tp-stepper__label">…</span></li>
       </ol>
       <h2 class="tp-state__title" id="st-vm">Couldn't start a scanner VM</h2>
-      <p class="tp-state__text">Vultr didn't report the instance ready within 3 minutes. Nothing was left running; the reaper cleans up any partial instance.</p>
+      <p class="tp-state__text" id="err-vm-detail">Vultr didn't report the instance ready within 3 minutes. Nothing was left running; the reaper cleans up any partial instance.</p>
       <button type="button" class="tp-btn tp-btn--primary" style="align-self:flex-start">Try again</button>
     </section>
 
-    <section class="tp-panel tp-state" aria-labelledby="st-key">
+    <section class="tp-panel tp-state" data-reason="key" aria-labelledby="st-key">
       <span class="tp-eyebrow" id="st-key">BYO key rejected</span>
       <div class="tp-field">
         <label for="rk" class="tp-label">Vultr API key</label>
         <input id="rk" class="tp-input tp-input--error" type="password" value="xxxxxxxxxxxxxxxx" aria-invalid="true" aria-describedby="rk-err">
-        <p class="tp-error-text" id="rk-err"><svg class="tp-icon"><use href="#i-alert"/></svg>Vultr returned 401. Check the key, and that its IP allow-list includes toolpain's address.</p>
+        <p class="tp-error-text" id="err-key-detail"><svg class="tp-icon"><use href="#i-alert"/></svg>Vultr returned 401. Check the key, and that its IP allow-list includes toolpain's address.</p>
         <p class="tp-help" style="font-size:12px">The key was discarded. Nothing was stored.</p>
       </div>
+    </section>
+
+    <section class="tp-panel tp-state" data-reason="failed" aria-labelledby="st-failed">
+      <span class="tp-eyebrow">Scan failed</span>
+      <h2 class="tp-state__title" id="st-failed">The scan stopped before a report</h2>
+      <p class="tp-state__text" id="err-failed-detail">Nothing was left running.</p>
+      <a href="index.html" class="tp-btn tp-btn--primary" style="align-self:flex-start">Try another repo</a>
+    </section>
+
+    <section class="tp-panel tp-state" data-reason="cancelled" aria-labelledby="st-cancelled">
+      <span class="tp-eyebrow">Cancelled</span>
+      <h2 class="tp-state__title" id="st-cancelled">Scan cancelled</h2>
+      <p class="tp-state__text">The run stopped and the environment was destroyed. Nothing was kept.</p>
+      <a href="index.html" class="tp-btn tp-btn--primary" style="align-self:flex-start">Scan a repo</a>
     </section>
 
     <section class="tp-panel tp-state tp-state--empty" aria-labelledby="st-empty">
@@ -574,7 +611,7 @@ exit 1 · 00:38</pre></div>
     <svg class="tp-icon tp-icon--lg tp-toast__icon"><use href="#i-flag"/></svg>
     <div class="tp-toast__body">
       <span class="tp-toast__title">Flagged</span>
-      <span><code>fetch_report</code> read the planted decoy and tried an undeclared host <code>collector.sinkhole.local</code>. Contained.</span>
+      <span id="toast-msg"><code>fetch_report</code> read the planted decoy and tried an undeclared host <code>collector.sinkhole.local</code>. Contained.</span>
       <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" data-set-state="done" style="align-self:flex-start;padding:0;min-height:32px;color:var(--info)">View evidence</button>
     </div>
     <button type="button" class="tp-toast__close" aria-label="Dismiss" data-dismiss="toast-decoy"><svg class="tp-icon"><use href="#i-x"/></svg></button>

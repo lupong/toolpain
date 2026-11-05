@@ -289,6 +289,163 @@ def sample_report(scan_id: str, repo_url: str | None = None) -> dict[str, Any]:
     }
 
 
+def _tool(
+    name: str,
+    privilege: str,
+    verdict: str,
+    claimed: str,
+    sources: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "privilege": privilege,
+        "verdict": verdict,
+        "sources": sources or ["D", "S", "R"],
+        "egress": [],
+        "decoy_reads": 0,
+        "claimed": claimed,
+        "observed": {"files": [], "processes": [], "network": []},
+        "evidence": [],
+        "downstream": [],
+    }
+
+
+def _member_graph(label: str, tool_names: list[str]) -> dict[str, Any]:
+    nodes: list[dict[str, Any]] = [
+        {"data": {"id": "server", "label": label, "kind": "server"}}
+    ]
+    edges: list[dict[str, Any]] = []
+    for i, name in enumerate(tool_names, start=1):
+        nodes.append({"data": {"id": name, "label": name, "kind": "tool", "privilege": "low"}})
+        edges.append(
+            {"data": {"id": f"e{i}", "source": "server", "target": name, "kind": "member"}}
+        )
+    return {"nodes": nodes, "edges": edges}
+
+
+_FS_TOOLS = [
+    ("read_file", "low", "Read a file inside the allowed directories"),
+    ("read_multiple_files", "low", "Read several files inside the allowed directories"),
+    ("write_file", "medium", "Write a file inside the allowed directories"),
+    ("edit_file", "medium", "Apply a patch inside the allowed directories"),
+    ("create_directory", "low", "Create a directory inside the allowed directories"),
+    ("list_directory", "low", "List a directory inside the allowed directories"),
+    ("directory_tree", "low", "Show a directory tree inside the allowed directories"),
+    ("move_file", "medium", "Move or rename a file inside the allowed directories"),
+    ("search_files", "low", "Search for files inside the allowed directories"),
+    ("get_file_info", "low", "Read metadata for a file inside the allowed directories"),
+    ("list_allowed_directories", "low", "List the directories this server is allowed to touch"),
+]
+
+
+def filesystem_report(scan_id: str, repo_url: str | None = None) -> dict[str, Any]:
+    """Clean official filesystem server. No Playwright tools, no undocumented tools."""
+    repo = repo_url or DEMO_REPOS["server-filesystem"]["repo_url"]
+    tools = [_tool(name, priv, "confirmed", claimed) for name, priv, claimed in _FS_TOOLS]
+    allow = [
+        name
+        for name, priv, _claimed in _FS_TOOLS
+        if priv == "low"
+    ]
+    return {
+        "scan_id": scan_id,
+        "repo": {
+            "url": repo,
+            "commit": "c4e1a90",
+            "upstream": "modelcontextprotocol/servers",
+            "fork_drift": [],
+        },
+        "verdict": "clean",
+        "stats": {
+            "tools": len(tools),
+            "undocumented": 0,
+            "critical_tier": 0,
+            "toxic_combos": 0,
+            "egress_attempted": 0,
+            "decoy_reads": 0,
+        },
+        "tools": tools,
+        "toxic_combos": [],
+        "findings": [],
+        "egress": {"declared": [], "attempted": []},
+        "ingress": [],
+        "least_privilege_config": {"allow_tools": allow, "allow_hosts": []},
+        "graph": _member_graph("server-filesystem", [t["name"] for t in tools]),
+    }
+
+
+def over_privileged_report(scan_id: str, repo_url: str | None = None) -> dict[str, Any]:
+    """Upstream Playwright: powerful tools, no decoy and no undocumented fetch_report."""
+    repo = repo_url or DEMO_REPOS["playwright-mcp"]["repo_url"]
+    report = sample_report(scan_id, repo)
+    report["verdict"] = "over_privileged"
+    report["repo"]["upstream"] = "microsoft/playwright-mcp"
+    report["repo"]["fork_drift"] = []
+    report["tools"] = [t for t in report["tools"] if t["name"] != "fetch_report"]
+    for tool in report["tools"]:
+        tool["decoy_reads"] = 0
+        if tool["name"] == "browser_navigate":
+            tool["egress"] = ["fixture.local"]
+            tool["verdict"] = "confirmed"
+        if tool["name"] == "browser_file_upload":
+            tool["verdict"] = "exceeds_claim"
+    report["findings"] = [
+        {
+            "id": "F1",
+            "severity": "high",
+            "type": "description_mismatch",
+            "tool": "browser_file_upload",
+            "title": "Upload reads outside the directory it claims",
+            "evidence": 'openat("/tmp/upload.bin")',
+            "explanation": (
+                "browser_file_upload opened a path outside the upload directory "
+                "its description allows."
+            ),
+            "recommendation": "Scope uploads to one directory, or drop browser_file_upload.",
+        },
+        {
+            "id": "F2",
+            "severity": "medium",
+            "type": "hidden_behind_flag",
+            "tool": "browser_pdf_save",
+            "title": "Tool only appears with a capability flag",
+            "evidence": "Present with --caps=pdf, absent from the default tool list",
+            "explanation": (
+                "browser_pdf_save stays hidden until the server starts with --caps=pdf."
+            ),
+            "recommendation": "Start the server with only the flags you intend to expose.",
+        },
+    ]
+    report["toxic_combos"] = [
+        c for c in report["toxic_combos"] if "fetch_report" not in c["tools"]
+    ]
+    report["egress"] = {"declared": ["your-app.example"], "attempted": []}
+    names = [t["name"] for t in report["tools"]]
+    report["stats"] = {
+        "tools": len(names),
+        "undocumented": 0,
+        "critical_tier": sum(1 for t in report["tools"] if t["privilege"] == "critical"),
+        "toxic_combos": len(report["toxic_combos"]),
+        "egress_attempted": 0,
+        "decoy_reads": 0,
+    }
+    report["least_privilege_config"] = {
+        "allow_tools": ["browser_navigate", "browser_snapshot", "browser_click", "browser_type"],
+        "allow_hosts": ["your-app.example"],
+    }
+    report["graph"] = _member_graph("playwright-mcp", names)
+    return report
+
+
+def report_for_demo(demo: str | None, scan_id: str, repo_url: str | None = None) -> dict[str, Any]:
+    """Pick the seeded/fake report that matches the demo's verdict."""
+    if demo == "server-filesystem":
+        return filesystem_report(scan_id, repo_url)
+    if demo == "playwright-mcp":
+        return over_privileged_report(scan_id, repo_url)
+    return sample_report(scan_id, repo_url)
+
+
 DEMO_REPOS = {
     "server-filesystem": {
         "repo_url": "https://github.com/modelcontextprotocol/servers",

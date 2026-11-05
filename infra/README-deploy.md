@@ -36,12 +36,18 @@ Optional: install gVisor (`runsc`) and configure `infra/docker-daemon.json` for 
 ```bash
 export PROVISIONER=vultr
 export VULTR_API_KEY=...
-export VULTR_INFERENCE_API_KEY=...
+export VULTR_SNAPSHOT_ID=...          # required for reliable boots
+export CONTROL_PLANE_URL=https://toolpain.com
+export LLM_MODE=openai                # or live + VULTR_INFERENCE_API_KEY
+export OPENAI_API_KEY=...             # if openai
 make dev
-# POST /api/scans with a public MCP repo
-# Confirm instance labeled toolpain-scan-<id> appears, then is deleted
-# Confirm report + destroy stage in the UI
+# POST /api/scans with a public MCP repo (optional scan_brief / prefer_subdir)
+# Confirm instance labeled toolpain-scan-<id> appears
+# Confirm early "Scanner VM runner starting" event, then report + destroy
 ```
+
+Cloud-init injects `CONTROL_PLANE_URL`, `PREFER_SUBDIR`, and base64 `SCAN_BRIEF_B64`.
+Destroy runs when the scan hits a terminal status (report posted) or after timeout; reaper cleans orphans.
 
 ## 5. Reaper
 

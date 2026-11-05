@@ -38,6 +38,11 @@ class ScanCreate(BaseModel):
     ref: str = "main"
     byo_vultr_key: str | None = None
     demo: str | None = None  # server-filesystem | playwright-mcp | decoy-trap-server
+    prefer_subdir: str | None = None  # monorepo package path, e.g. src/time
+    scan_brief: str | None = None  # optional user intent for executable codegen
+    protocol: Literal["auto", "stdio", "http", "sse"] = "auto"
+    upstream_url: str | None = None
+    mcp_url: str | None = None  # existing HTTP/SSE MCP endpoint (no host egress beyond this URL)
 
     @field_validator("repo_url")
     @classmethod
@@ -45,6 +50,46 @@ class ScanCreate(BaseModel):
         v = v.strip().rstrip("/")
         if not GITHUB_URL_RE.match(v):
             raise ValueError("repo_url must be https://github.com/<owner>/<repo>")
+        return v
+
+    @field_validator("prefer_subdir")
+    @classmethod
+    def validate_prefer_subdir(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().strip("/")
+        if not v or ".." in v or v.startswith("/") or "\\" in v:
+            raise ValueError("prefer_subdir must be a relative path without ..")
+        return v
+
+    @field_validator("scan_brief")
+    @classmethod
+    def validate_scan_brief(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        text = "".join(ch for ch in v if ord(ch) >= 32 or ch in "\n\t").strip()
+        if not text:
+            return None
+        return text[:2000]
+
+    @field_validator("upstream_url")
+    @classmethod
+    def validate_upstream(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        v = str(v).strip().rstrip("/")
+        if not GITHUB_URL_RE.match(v):
+            raise ValueError("upstream_url must be https://github.com/<owner>/<repo>")
+        return v
+
+    @field_validator("mcp_url")
+    @classmethod
+    def validate_mcp_url(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        v = str(v).strip()
+        if not v.startswith(("http://127.0.0.1", "http://localhost", "https://")):
+            raise ValueError("mcp_url must be localhost or https")
         return v
 
 
@@ -130,3 +175,15 @@ class Report(BaseModel):
     ingress: list[dict[str, Any]] = Field(default_factory=list)
     graph: dict[str, Any] | None = None
     harness: dict[str, Any] | None = None
+    # v2 executable-codegen / operator fields (optional)
+    scan_brief: str | None = None
+    launch: dict[str, Any] | None = None
+    recipe: dict[str, Any] | None = None
+    llm_oracle: list[dict[str, Any]] | None = None
+    expectations: list[dict[str, Any]] | None = None
+    artifacts: dict[str, Any] | None = None
+    costs: dict[str, Any] | None = None
+    transport: dict[str, Any] | None = None
+    upstream: dict[str, Any] | None = None
+    cache: dict[str, Any] | None = None
+    runtime: str | None = None

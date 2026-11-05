@@ -10,6 +10,7 @@ __pycache__/
 dist/
 build/
 data/scans/
+data/codegen_cache/
 data/reports/*
 !data/reports/.gitkeep
 *.db

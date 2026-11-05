@@ -82,6 +82,61 @@ def test_create_scan_sse_report(client: TestClient) -> None:
     assert scan["verdict"] == "flagged"
 
 
+def test_demo_reports_match_their_story() -> None:
+    from control_plane.models import Report
+    from control_plane.sample_report import report_for_demo
+
+    clean = report_for_demo("server-filesystem", "s_clean")
+    Report.model_validate(clean)
+    assert clean["verdict"] == "clean"
+    assert clean["stats"]["undocumented"] == 0
+    assert clean["stats"]["decoy_reads"] == 0
+    assert clean["findings"] == []
+    names = [t["name"] for t in clean["tools"]]
+    assert "read_file" in names
+    assert "fetch_report" not in names
+    assert "browser_navigate" not in names
+
+    over = report_for_demo("playwright-mcp", "s_over")
+    Report.model_validate(over)
+    assert over["verdict"] == "over_privileged"
+    assert over["stats"]["decoy_reads"] == 0
+    assert over["stats"]["undocumented"] == 0
+    assert all(f["type"] != "decoy_read_and_egress" for f in over["findings"])
+    assert all(t["name"] != "fetch_report" for t in over["tools"])
+
+    flagged = report_for_demo("decoy-trap-server", "s_flag")
+    Report.model_validate(flagged)
+    assert flagged["verdict"] == "flagged"
+    assert any(t["name"] == "fetch_report" for t in flagged["tools"])
+
+
+def test_filesystem_demo_scan_is_clean(client: TestClient) -> None:
+    r = client.post(
+        "/api/scans",
+        json={
+            "repo_url": "https://github.com/modelcontextprotocol/servers",
+            "demo": "server-filesystem",
+        },
+    )
+    assert r.status_code == 201
+    scan_id = r.json()["id"]
+    report = None
+    for _ in range(80):
+        rr = client.get(f"/api/scans/{scan_id}/report")
+        if rr.status_code == 200:
+            report = rr.json()
+            break
+        time.sleep(0.05)
+    assert report is not None
+    assert report["verdict"] == "clean"
+    assert "fetch_report" not in {t["name"] for t in report["tools"]}
+    log = client.get(f"/api/scans/{scan_id}/log")
+    assert log.status_code == 200
+    assert log.json()
+    assert all("fetch_report" not in ev["msg"] for ev in log.json())
+
+
 def test_internal_event_with_token(client: TestClient) -> None:
     import control_plane.main as main_mod
 
