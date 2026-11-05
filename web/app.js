@@ -466,7 +466,7 @@
     if (!list) return;
     clear(list);
     if (!liveTools.length) {
-      list.appendChild(el('li', 'tp-toollist__empty muted', 'Waiting for discovery…'));
+      list.appendChild(el('li', 'tp-toollist__empty muted', "Tools appear as they're discovered"));
       return;
     }
     var probed = 0;
@@ -498,13 +498,18 @@
     setMeter('#mem-value', '#mem-fill', '—', null);
     setText('#net-value', '—');
     setText('#net-meta', scanId ? ('tp_internal_' + scanId) : '—');
-    setText('#decoy-planted', '—');
-    setText('#egress-count', '—');
+    setText('#decoy-planted', '0');
+    setText('#egress-count', '0');
     setText('#tool-heading-meta', '');
     var sink = $('#sink-list');
     if (sink) { clear(sink); sink.appendChild(el('li', 'muted', 'None yet')); }
     var log = $('#log');
-    if (log) clear(log);
+    if (log) {
+      clear(log);
+      log.appendChild(el('div', 'tp-log__line tp-log__line--info tp-log__placeholder', ''));
+      var hold = log.lastChild;
+      hold.appendChild(el('span', 'tp-log__msg', 'Waiting for the scanner…'));
+    }
     renderLiveTools();
     resetStepper();
     var toast = $('#toast-decoy');
@@ -552,10 +557,14 @@
       renderLiveTools();
     }
     if (payload.tool) {
+      var status = payload.verdict || payload.status || 'probing';
       var row = null;
       liveTools.forEach(function (t) { if (t.name === payload.tool) row = t; });
-      if (!row) liveTools.push({ name: payload.tool, sources: [], status: payload.status || 'probing' });
-      else row.status = payload.status || row.status;
+      if (!row) liveTools.push({ name: payload.tool, sources: payload.sources || [], status: status });
+      else {
+        row.status = status;
+        if (payload.sources && payload.sources.length) row.sources = payload.sources;
+      }
       renderLiveTools();
     }
     if (data.level === 'alert') {
@@ -1136,6 +1145,8 @@
     }).then(function (report) {
       renderReport(report);
       setState('done');
+      var view = $('#view-report');
+      if (view) view.hidden = true;
       var replay = $('#replay-scan');
       if (replay) replay.hidden = false;
       var shareBtn = $('#share-report');
@@ -1177,7 +1188,9 @@
       try { data = JSON.parse(ev.data); } catch (e) { /* keep empty */ }
       if (data.status === 'done') {
         markStep('destroy', 'done');
-        loadReport(scanId);
+        offerReport();
+      } else if (data.status === 'cancelled') {
+        showCancelled();
       } else if (data.status === 'timeout') {
         loadReport(scanId).then(function () { showError('timeout', data.detail); }, function () { showError('timeout', data.detail); });
       } else {
@@ -1186,6 +1199,37 @@
       es.close();
     });
     es.onerror = function () { /* browser retries */ };
+  }
+
+  function offerReport() {
+    var cancel = $('#cancel-scan');
+    if (cancel) cancel.hidden = true;
+    var view = $('#view-report');
+    if (view) {
+      view.hidden = false;
+      view.onclick = function () { loadReport(scanId); };
+    }
+    setTimeout(function () {
+      if (document.body.getAttribute('data-state') === 'in-progress') loadReport(scanId);
+    }, 3000);
+  }
+
+  function showCancelled() {
+    var items = $$('#stepper .tp-stepper__item');
+    var current = null;
+    items.forEach(function (li) {
+      if (li.className.indexOf('--running') >= 0) current = li;
+    });
+    if (!current) {
+      items.forEach(function (li) {
+        if (!current && li.className.indexOf('--pending') >= 0) current = li;
+      });
+    }
+    if (current) markStep(STAGE_ORDER[items.indexOf(current)] || 'destroy', 'failed');
+    var banner = $('#cancel-banner');
+    if (banner) banner.hidden = false;
+    var cancel = $('#cancel-scan');
+    if (cancel) cancel.hidden = true;
   }
 
   function replayScan() {
@@ -1235,7 +1279,8 @@
       cancelBtn.addEventListener('click', function () {
         cancelBtn.disabled = true;
         cancelBtn.textContent = 'Cancelling…';
-        fetch('/api/scans/' + encodeURIComponent(scanId) + '/cancel', { method: 'POST' });
+        fetch('/api/scans/' + encodeURIComponent(scanId) + '/cancel', { method: 'POST' })
+          .then(function () { showCancelled(); });
       });
     }
     fetch('/api/scans/' + encodeURIComponent(scanId)).then(function (r) { return r.json(); }).then(function (s) {
@@ -1280,9 +1325,7 @@
   }, 1000);
 
   var toast = $('#toast-decoy');
-  if (toast && !scanId) {
-    setTimeout(function () { if (document.body.getAttribute('data-state') === 'in-progress') toast.hidden = false; }, 1200);
-  }
+  if (toast) toast.hidden = true;
   $$('[data-dismiss]').forEach(function (b) {
     b.addEventListener('click', function () {
       var node = document.getElementById(b.getAttribute('data-dismiss'));
@@ -1330,6 +1373,8 @@
         row.appendChild(el('span', 'tp-log__' + p[0], p[1] || ''));
       });
       row.hidden = level !== 'all' && level !== e.level;
+      var placeholder = log.querySelector('.tp-log__placeholder');
+      if (placeholder) placeholder.remove();
       log.appendChild(row);
       if (!paused) log.scrollTop = log.scrollHeight;
     };

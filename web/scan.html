@@ -44,8 +44,8 @@
   <div class="tp-container tp-scanbar__inner">
     <a href="index.html" class="tp-wordmark" style="font-size:16px"><svg class="tp-icon tp-icon--lg" style="color:var(--accent)"><use href="#i-logo"/></svg>ToolPain</a>
     <div class="tp-scanbar__meta">
-      <span class="tp-chip tp-chip--repo" id="repo-chip-live"><span id="repo-chip-name">andrew/playwright-mcp</span> <span class="muted" id="repo-chip-ref">@ main · a1b2c3d</span></span>
-      <span class="mono muted" id="scan-id" style="font-size:12px">scan s_8f2c</span>
+      <span class="tp-chip tp-chip--repo" id="repo-chip-live"><span id="repo-chip-name">—</span> <span class="muted" id="repo-chip-ref"></span></span>
+      <span class="mono muted" id="scan-id" style="font-size:12px">scan —</span>
       <span class="tp-badge tp-badge--outline" id="account-mode-live">toolpain account</span>
     </div>
     <div class="tp-scanbar__end">
@@ -54,8 +54,9 @@
         <button type="button" data-set-state="done" aria-pressed="false">Done</button>
         <button type="button" data-set-state="error" aria-pressed="false">Error</button>
       </div>
-      <span class="tp-timer" data-when="in-progress" aria-label="Elapsed time"><svg class="tp-icon tp-icon--sm muted"><use href="#i-clock"/></svg><span id="elapsed">02:41</span></span>
+      <span class="tp-timer" data-when="in-progress" aria-label="Elapsed time"><svg class="tp-icon tp-icon--sm muted"><use href="#i-clock"/></svg><span id="elapsed">00:00</span></span>
       <button type="button" class="tp-btn tp-btn--danger" id="cancel-scan" data-when="in-progress">Cancel scan</button>
+      <button type="button" class="tp-btn tp-btn--primary" id="view-report" hidden>Scan complete. View report</button>
       <span class="tp-timer muted" id="done-meta" data-when="done" style="font-size:13px;font-weight:400"><svg class="tp-icon tp-icon--sm" style="color:var(--low)"><use href="#i-check"/></svg><span id="done-meta-text">04:12 · VM destroyed</span></span>
       <button type="button" class="tp-btn tp-btn--ghost tp-btn--icon" data-theme-toggle aria-label="Switch to light theme"><svg class="tp-icon" aria-hidden="true"><use href="#i-sun"/></svg></button>
     </div>
@@ -64,17 +65,19 @@
 
 <!-- ============ IN PROGRESS ============ -->
 <main class="tp-container" data-view="in-progress" style="padding-block:24px 64px;display:flex;flex-direction:column;gap:24px">
+  <div class="tp-banner" id="cancel-banner" hidden role="status"><strong>Scan cancelled. VM destroyed.</strong></div>
+  
 
   <section class="tp-panel tp-stepper-wrap" aria-label="Scan stages">
     <ol class="tp-stepper" id="stepper">
-      <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Intake</span><span class="tp-stepper__meta">0.4s</span></li>
-      <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Provision</span><span class="tp-stepper__meta">41s</span></li>
-      <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Fetch</span><span class="tp-stepper__meta">2s</span></li>
-      <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Build</span><span class="tp-stepper__meta">28s</span></li>
-      <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Isolate</span><span class="tp-stepper__meta">3s</span></li>
-      <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Discover</span><span class="tp-stepper__meta">5s</span></li>
-      <li class="tp-stepper__item tp-stepper__item--done"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>Research</span><span class="tp-stepper__meta">28s</span></li>
-      <li class="tp-stepper__item tp-stepper__item--running" aria-current="step"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-spin"/></svg>Probe</span><span class="tp-stepper__meta">6 / 27</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Intake</span><span class="tp-stepper__meta">pending</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Provision</span><span class="tp-stepper__meta">pending</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Fetch</span><span class="tp-stepper__meta">pending</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Build</span><span class="tp-stepper__meta">pending</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Isolate</span><span class="tp-stepper__meta">pending</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Discover</span><span class="tp-stepper__meta">pending</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Research</span><span class="tp-stepper__meta">pending</span></li>
+      <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Probe</span><span class="tp-stepper__meta">pending</span></li>
       <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Analyze</span><span class="tp-stepper__meta">pending</span></li>
       <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Report</span><span class="tp-stepper__meta">pending</span></li>
       <li class="tp-stepper__item tp-stepper__item--pending"><span class="tp-stepper__bar"></span><span class="tp-stepper__label"><svg class="tp-icon tp-icon--sm"><use href="#i-dot"/></svg>Destroy</span><span class="tp-stepper__meta">pending</span></li>
@@ -89,46 +92,36 @@
       </div>
       <div class="tp-netstatus">
         <svg class="tp-icon" style="width:28px;height:28px;color:var(--low);stroke-width:2"><use href="#i-lock"/></svg>
-        <div><div class="tp-help" style="font-size:12px">Network</div><div class="tp-netstatus__value" id="net-value">BLOCKED</div></div>
-        <div class="tp-netstatus__meta" id="net-meta">tp_internal_s_8f2c<br>--internal</div>
+        <div><div class="tp-help" style="font-size:12px">Network</div><div class="tp-netstatus__value" id="net-value">—</div></div>
+        <div class="tp-netstatus__meta" id="net-meta">—</div>
       </div>
       <dl class="tp-dl">
         <dt>Runtime</dt><dd>gVisor (runsc)</dd>
         <dt>DNS</dt><dd>sinkhole 10.66.12.53</dd>
       </dl>
-      <div class="tp-meter" id="meter-cpu"><div class="tp-meter__head"><span>CPU</span><span id="cpu-value">38% of 2 vCPU</span></div><div class="tp-meter__track" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow="38"><div class="tp-meter__fill" id="cpu-fill" style="--pct:38%"></div></div></div>
-      <div class="tp-meter" id="meter-mem"><div class="tp-meter__head"><span>Memory</span><span id="mem-value">612 MB / 2 GB</span></div><div class="tp-meter__track" role="meter" aria-label="Memory" aria-valuemin="0" aria-valuemax="100" aria-valuenow="30"><div class="tp-meter__fill" id="mem-fill" style="--pct:30%"></div></div></div>
-      <div class="tp-meter tp-meter--time" id="meter-time"><div class="tp-meter__head"><span>Time limit</span><span id="time-label">02:41 / 15:00</span></div><div class="tp-meter__track" role="meter" aria-label="Time limit" aria-valuemin="0" aria-valuemax="100" aria-valuenow="18"><div class="tp-meter__fill" id="time-fill" style="--pct:18%"></div></div></div>
+      <div class="tp-meter" id="meter-cpu"><div class="tp-meter__head"><span>CPU</span><span id="cpu-value">—</span></div><div class="tp-meter__track" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tp-meter__fill" id="cpu-fill" style="--pct:0%"></div></div></div>
+      <div class="tp-meter" id="meter-mem"><div class="tp-meter__head"><span>Memory</span><span id="mem-value">—</span></div><div class="tp-meter__track" role="meter" aria-label="Memory" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tp-meter__fill" id="mem-fill" style="--pct:0%"></div></div></div>
+      <div class="tp-meter tp-meter--time" id="meter-time"><div class="tp-meter__head"><span>Time limit</span><span id="time-label">00:00 / 15:00</span></div><div class="tp-meter__track" role="meter" aria-label="Time limit" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tp-meter__fill" id="time-fill" style="--pct:0%"></div></div></div>
       <div class="tp-counters">
         <div class="tp-counter"><span class="tp-counter__label">Decoys planted</span><span class="tp-counter__value" id="decoy-planted">0</span></div>
-        <div class="tp-counter tp-counter--alert"><span class="tp-counter__label">Undeclared egress caught</span><span class="tp-counter__value" id="egress-count" aria-live="polite">2</span></div>
+        <div class="tp-counter tp-counter--alert"><span class="tp-counter__label">Undeclared egress caught</span><span class="tp-counter__value" id="egress-count" aria-live="polite">0</span></div>
       </div>
       <div class="tp-stack" style="gap:8px">
         <span class="tp-help" style="font-size:12px">Caught by sinkhole</span>
-        <ul class="tp-sinkhits" id="sink-list" style="list-style:none;margin:0;padding:0">
-          <li>collector.sinkhole.local:443</li>
-          <li>cdn.thirdparty.local:443</li>
-        </ul>
+        <ul class="tp-sinkhits" id="sink-list" style="list-style:none;margin:0;padding:0"></ul>
       </div>
     </aside>
 
     <div class="tp-split__main">
       <section class="tp-panel" aria-label="Tool discovery">
         <div class="tp-panel__head">
-          <h2 class="tp-panel__title" id="tool-heading">Tools <span class="mono muted" id="tool-heading-meta" style="font-weight:400;font-size:13px">27 found · 6 probed</span></h2>
+          <h2 class="tp-panel__title" id="tool-heading">Tools <span class="mono muted" id="tool-heading-meta" style="font-weight:400;font-size:13px"></span></h2>
           <span class="mono muted" style="font-size:11px">D docs · S source · R runtime · F flag</span>
         </div>
         <ul class="tp-toollist" id="toollist">
-          <li class="tp-toollist__item"><span class="tp-toollist__name">browser_navigate</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--confirmed"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>confirmed</span></span></li>
-          <li class="tp-toollist__item"><span class="tp-toollist__name">browser_evaluate</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--confirmed"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>confirmed</span></span></li>
-          <li class="tp-toollist__item"><span class="tp-toollist__name">browser_file_upload</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--exceeds_claim"><svg class="tp-icon tp-icon--sm"><use href="#i-up"/></svg>exceeds claim</span></span></li>
-          <li class="tp-toollist__item"><span class="tp-toollist__name">fetch_report</span><span class="tp-sources" aria-label="Found in source, runtime. Missing from docs"><span class="tp-source tp-source--missing">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--flagged"><svg class="tp-icon tp-icon--sm"><use href="#i-flag"/></svg>flagged</span></span></li>
-          <li class="tp-toollist__item"><span class="tp-toollist__name">browser_click</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--confirmed"><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg>confirmed</span></span></li>
-          <li class="tp-toollist__item"><span class="tp-toollist__name">browser_pdf_save</span><span class="tp-sources" aria-label="Found in docs, source, flag"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source">R</span><span class="tp-source tp-source--on">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--probing"><svg class="tp-icon tp-icon--sm"><use href="#i-spin"/></svg>probing</span></span></li>
-          <li class="tp-toollist__item"><span class="tp-toollist__name">browser_snapshot</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--queued"><svg class="tp-icon tp-icon--sm"><use href="#i-dash"/></svg>queued</span></span></li>
-          <li class="tp-toollist__item"><span class="tp-toollist__name">browser_type</span><span class="tp-sources" aria-label="Found in docs, source, runtime"><span class="tp-source tp-source--on">D</span><span class="tp-source tp-source--on">S</span><span class="tp-source tp-source--on">R</span><span class="tp-source">F</span></span><span class="tp-toollist__status"><span class="tp-badge tp-verdict--queued"><svg class="tp-icon tp-icon--sm"><use href="#i-dash"/></svg>queued</span></span></li>
+          <li class="tp-toollist__empty muted">Tools appear as they're discovered</li>
         </ul>
-        <div class="tp-toollist__more" id="tool-more">+ 19 more queued</div>
+        <div class="tp-toollist__more" id="tool-more" hidden></div>
       </section>
 
       <section class="tp-panel tp-log" aria-label="Live log">
@@ -146,21 +139,7 @@
         </div>
         <!-- Append .tp-log__line elements from SSE events; app.js autoscrolls unless paused. -->
         <div class="tp-log__body" id="log" role="log" aria-live="polite" tabindex="0">
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">00:00.4</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">intake</span><span class="tp-log__msg">andrew/playwright-mcp @ main resolved to a1b2c3d</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">00:03.1</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">provision</span><span class="tp-log__msg">instance toolpain-scan-s_8f2c requested, tag toolpain</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">00:41.8</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">provision</span><span class="tp-log__msg">instance ready · firewall group: no inbound</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">00:44.0</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">fetch</span><span class="tp-log__msg">cloned · upstream microsoft/playwright-mcp detected</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">01:12.6</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">build</span><span class="tp-log__msg">npm ci complete · 2 install scripts traced · image committed</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">01:15.0</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">isolate</span><span class="tp-log__msg">network tp_internal_s_8f2c 10.66.12.0/24 --internal · sinkhole .53</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">01:15.2</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">isolate</span><span class="tp-log__msg">4 decoys planted (file, .env, cookie, localStorage)</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">01:19.9</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">discover</span><span class="tp-log__msg">27 tools · runtime 26 · flags +1 · source 27 · docs 26</span></div>
-          <div class="tp-log__line tp-log__line--warn"><span class="tp-log__ts">01:20.0</span><span class="tp-log__lvl">WARN</span><span class="tp-log__stage">discover</span><span class="tp-log__msg">fetch_report in source + runtime, missing from README</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">01:48.3</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">research</span><span class="tp-log__msg">profiles generated for 27 tools</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">02:02.7</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">probe</span><span class="tp-log__msg">browser_navigate → http://fixture.local/login ok (812 ms)</span></div>
-          <div class="tp-log__line tp-log__line--warn"><span class="tp-log__ts">02:19.4</span><span class="tp-log__lvl">WARN</span><span class="tp-log__stage">probe</span><span class="tp-log__msg">browser_file_upload opened a path outside its declared scope</span></div>
-          <div class="tp-log__line tp-log__line--alert"><span class="tp-log__ts">02:31.0</span><span class="tp-log__lvl">ALERT</span><span class="tp-log__stage">probe</span><span class="tp-log__msg">fetch_report openat /workspace/canaries/decoy_secret.txt</span></div>
-          <div class="tp-log__line tp-log__line--alert"><span class="tp-log__ts">02:31.2</span><span class="tp-log__lvl">ALERT</span><span class="tp-log__stage">sinkhole</span><span class="tp-log__msg">DNS collector.sinkhole.local → 10.66.12.53 · TLS SNI :443 · contained</span></div>
-          <div class="tp-log__line tp-log__line--info"><span class="tp-log__ts">02:40.9</span><span class="tp-log__lvl">INFO</span><span class="tp-log__stage">probe</span><span class="tp-log__msg">browser_pdf_save with --caps=pdf …</span></div>
+          <div class="tp-log__line tp-log__line--info tp-log__placeholder"><span class="tp-log__msg">Waiting for the scanner…</span></div>
         </div>
       </section>
     </div>
@@ -196,7 +175,7 @@
           <div class="tp-row">
             <a class="tp-btn tp-btn--primary" href="#" id="download-json" download="toolpain-s_8f2c.json"><svg class="tp-icon"><use href="#i-download"/></svg>Download JSON</a>
             <button type="button" class="tp-btn tp-btn--secondary" id="share-report" hidden>Share report</button>
-            <button type="button" class="tp-btn tp-btn--secondary" id="replay-scan" hidden><svg class="tp-icon"><use href="#i-play"/></svg>Replay</button>
+            <button type="button" class="tp-btn tp-btn--ghost" id="replay-scan" hidden><svg class="tp-icon"><use href="#i-play"/></svg>Replay scan</button>
             <button type="button" class="tp-btn tp-btn--secondary" data-copy-target="#cfg-text"><svg class="tp-icon"><use href="#i-copy"/></svg><span>Copy least-privilege config</span></button>
           </div>
         </div>
@@ -414,7 +393,7 @@ exit 1 · 00:38</pre></div>
     <svg class="tp-icon tp-icon--lg tp-toast__icon"><use href="#i-flag"/></svg>
     <div class="tp-toast__body">
       <span class="tp-toast__title">Flagged</span>
-      <span id="toast-msg"><code>fetch_report</code> read the planted decoy and tried an undeclared host <code>collector.sinkhole.local</code>. Contained.</span>
+      <span id="toast-msg">Contained.</span>
       <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" data-set-state="done" style="align-self:flex-start;padding:0;min-height:32px;color:var(--info)">View evidence</button>
     </div>
     <button type="button" class="tp-toast__close" aria-label="Dismiss" data-dismiss="toast-decoy"><svg class="tp-icon"><use href="#i-x"/></svg></button>
