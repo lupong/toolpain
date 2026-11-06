@@ -53,6 +53,21 @@ Plan: [`docs/V3_PLAN.md`](docs/V3_PLAN.md). Shift: multi-transport, production p
 - [x] **M25 — Multi-tenant lite** — API tokens, quota, private reports
 - [x] **M26 — Product polish** — live scans no longer fall back to the sample report
 
+## v4 milestones
+
+Plan: [`docs/V4_PLAN.md`](docs/V4_PLAN.md). Shift: strict local product. Live Vultr sign-off is v6.
+
+- [x] **M27 — Report contract** — invalid bodies are not stored; terminal statuses are not overwritten
+- [x] **M28 — Typed failures** — error panels come from `error_code`, not sample copy
+- [x] **M29 — Verdict matrix** — headline, lede, and next step match the four verdicts, including empty and not-observed
+- [x] **M30 — HTTP/SSE honesty** — list-only coverage is labeled; `mcp_url` rejects link-local and metadata hosts
+- [x] **M31 — Authz tightening** — compare and token lookup respect owners; prod refuses the default admin secret
+- [x] **M32 — Runner edges** — missing ref, no server, hung tool, oversized output, and guard fallback still destroy the sandbox
+- [x] **M33 — Share, compare, UI edges** — share opens the report UI; compare is in the UI; `web/` matches `design/`
+- [x] **M34 — Regression net** — the cases above are in `make lint test`
+- [x] **M35 — Scan cost** — rate-card estimate before run, metered actual after, delta on the report
+- [x] **M36 — Scan certificate** — HTML preview and PDF download of the audit record for a done scan
+
 ## Notes
 
 - Started: 2026-11-03
@@ -60,3 +75,5 @@ Plan: [`docs/V3_PLAN.md`](docs/V3_PLAN.md). Shift: multi-transport, production p
 - Env: Docker present, runsc absent → `RUNTIME=runc` / FakeSandbox for offline demo
 - v2 plan drafted after local OpenAI executable codegen + scan_brief / workdir / next_plans / oracle
 - v3 plan drafted after v2 local implementation; live Vultr still open as M18 gate
+- v4 plan drafted 2026-11-05. Live sign-off moved to v6. v5 is the rehearsal between them.
+- v4 implemented locally 2026-11-05 (M27–M36). `app.js` stayed one file; see DECISIONS.

@@ -42,8 +42,9 @@ from runner.codegen import (
 from runner.codegen_cache import make_key
 from runner.detect import detect_package
 from runner.discover import discover
+from runner.errors import ScanFailure, classify_fetch, ensure_launchable
 from runner.events import EventSink, HttpSink, NullSink
-from runner.fetch import fetch_repo, git_commit, manifest_from_local
+from runner.fetch import FetchError, fetch_repo, git_commit, manifest_from_local
 from runner.harness import ProbeHarness, generate_harness, harness_to_report_blob
 from runner.launch import DECOY_SERVER, DEMO_DIR, LocalLaunchRefused
 from runner.launch_plan import demo_launch_plan, resolve_launch_plan
@@ -98,6 +99,19 @@ def _under_demo(path: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _tree_bytes(root: Path) -> int:
+    total = 0
+    try:
+        for path in root.rglob("*"):
+            if path.is_file():
+                total += path.stat().st_size
+                if total > 500_000_000:
+                    break
+    except OSError:
+        return total
+    return total
 
 
 def _readme_text(manifest: RepoManifest) -> str | None:
@@ -179,6 +193,9 @@ async def _prepare_source(
             dest,
             prefer_subdir=cfg.prefer_subdir,
         )
+    except FetchError as exc:
+        shutil.rmtree(clone_root, ignore_errors=True)
+        raise classify_fetch(exc) from exc
     except Exception:
         shutil.rmtree(clone_root, ignore_errors=True)
         raise
@@ -298,47 +315,69 @@ async def _prepare_sandbox(
 
 
 async def _scan_http_endpoint(cfg: ScanConfig, sink: EventSink) -> dict[str, Any]:
-    """Probe an already-running HTTP/SSE MCP endpoint (localhost or https)."""
+    """List tools on an already-running HTTP/SSE endpoint. This does not probe them."""
     await sink.emit("discover", f"HTTP MCP list_tools {cfg.mcp_url}")
     client = HttpMcpClient(cfg.mcp_url or "")
     tools = await client.list_tools()
-    names = [str(t.get("name")) for t in tools]
-    flagged = "fetch_report" in names
     tool_rows = [
         {
-            "name": n,
-            "privilege": "high" if n == "fetch_report" else "low",
-            "verdict": "flagged" if n == "fetch_report" else "confirmed",
+            "name": str(t.get("name")),
+            "privilege": "low",
+            "verdict": "not_observed",
             "sources": ["R"],
+            "egress": [],
+            "decoy_reads": 0,
+            "claimed": t.get("description"),
+            "observed": {"files": [], "processes": [], "network": []},
+            "evidence": [],
+            "downstream": [],
         }
-        for n in names
+        for t in tools
+        if t.get("name")
     ]
-    findings = []
-    if flagged:
+    findings: list[dict[str, Any]] = []
+    if tool_rows:
         findings.append(
             {
                 "id": "F1",
-                "severity": "high",
-                "type": "http_undocumented_tool",
-                "tool": "fetch_report",
-                "title": "HTTP MCP exposes fetch_report",
+                "severity": "medium",
+                "type": "not_observed",
+                "tool": None,
+                "title": "Listed, not probed",
                 "evidence": cfg.mcp_url,
-                "explanation": "Tool listed over HTTP JSON-RPC.",
-                "recommendation": "Review the tool before granting it to an agent.",
+                "explanation": "The HTTP endpoint listed tools. ToolPain did not call them.",
+                "recommendation": "The server started, and no tool actually ran. Treat this as incomplete.",
             }
         )
     report = {
         "scan_id": cfg.scan_id,
         "repo": {"url": cfg.repo_url, "ref": cfg.ref, "commit": "http"},
-        "verdict": "suspicious" if flagged else "clean",
-        "stats": {"tools": len(names), "undocumented": int(flagged)},
+        "verdict": "suspicious",
+        "coverage": "list_only",
+        "partial": True,
+        "stats": {
+            "tools": len(tool_rows),
+            "undocumented": 0,
+            "critical_tier": 0,
+            "toxic_combos": 0,
+            "egress_attempted": 0,
+            "decoy_reads": 0,
+        },
         "tools": tool_rows,
         "findings": findings,
+        "toxic_combos": [],
+        "egress": {"declared": [], "attempted": []},
+        "least_privilege_config": {"allow_tools": [], "allow_hosts": []},
         "transport": {"kind": "http" if cfg.protocol != "sse" else "sse", "mcp_url": cfg.mcp_url},
         "runtime": cfg.runtime,
         "scan_brief": cfg.scan_brief,
+        "meters": {"repo_bytes": 0, "probe_rounds": 0, "runtime": cfg.runtime},
     }
-    await sink.emit("report", f"HTTP MCP scan {report['verdict']} ({len(names)} tools)")
+    await sink.emit(
+        "report",
+        f"HTTP MCP listed {len(tool_rows)} tools (not probed)",
+        data={"coverage": "list_only"},
+    )
     return report
 
 
@@ -377,6 +416,7 @@ async def run_scan_async(
         if not _under_demo(manifest.workdir):
             manifest, workdir_blob = await _maybe_llm_workdir(cfg, manifest, sink, llm)
         source = manifest.workdir
+        ensure_launchable(manifest.language, cfg.server_cmd)
         readme = _readme_text(manifest)
         upstream = cfg.upstream_tools if cfg.upstream_tools is not None else _load_upstream(source)
         if upstream is None and cfg.upstream_url:
@@ -611,18 +651,12 @@ async def run_scan_async(
                 kind="exec",
             )
         }
-        report["costs"] = {
-            "llm_codegen_calls_est": sum(
-                1
-                for x in (
-                    wp.get("source") == "llm",
-                    cg.get("source") == "llm",
-                    pg.get("source") == "llm",
-                )
-                if x
-            ),
+        report["meters"] = {
             "probe_rounds": 1 + (1 if pg.get("round2_plans") else 0),
+            "runtime": cfg.runtime,
+            "repo_bytes": _tree_bytes(manifest.root),
         }
+        report["coverage"] = "full"
         await sink.emit(
             "report",
             f"Verdict: {report['verdict']} ({len(report['findings'])} findings)",
@@ -630,8 +664,24 @@ async def run_scan_async(
         )
         await sink.report(report)
         return report
-    except Exception as exc:
-        await sink.emit("report", f"Scan failed: {exc!r}", level="warn")
+    except BuildError as exc:
+        raise ScanFailure("build_failed", str(exc)) from exc
+    except ScanFailure as exc:
+        await sink.emit(
+            "report",
+            exc.detail,
+            level="warn",
+            data={"code": exc.code, "error": exc.code},
+        )
+        raise
+    except Exception:
+        log.exception("scan failed")
+        await sink.emit(
+            "report",
+            "Scan failed",
+            level="warn",
+            data={"code": "internal", "error": "internal"},
+        )
         raise
     finally:
         if sb is not None:

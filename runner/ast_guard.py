@@ -82,9 +82,7 @@ def validate_module_source(
             raise AstGuardError(f"forbidden attribute: {node.attr}")
 
     defined = {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     missing = required_fns - defined
     if missing:

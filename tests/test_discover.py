@@ -9,6 +9,7 @@ import pytest
 from mcp import StdioServerParameters
 
 from runner.discover import (
+    _merge,
     discover,
     extract_flag_candidates,
     parse_docs_tools,
@@ -16,6 +17,7 @@ from runner.discover import (
 )
 from runner.launch import DECOY_SERVER, LocalLaunchRefused, local_launcher
 from runner.mcp_client import McpClient, McpClientError
+from runner.models import ServerSnapshot, ToolInfo
 
 DEMO = DECOY_SERVER.parent
 EXPECTED = {"add", "echo", "reverse_text", "word_count", "current_time", "fetch_report"}
@@ -76,6 +78,57 @@ def test_parse_docs_tools_variants() -> None:
 - `ignored` - nope
 """
     assert parse_docs_tools(readme) == ["alpha", "beta_tool", "gamma", "delta"]
+
+
+def test_parse_docs_tools_skips_nested_arguments() -> None:
+    readme = """### Available Tools
+
+- `get_current_time` - Get current time in a specific timezone.
+  - Optional arguments:
+    - `timezone` (string): IANA timezone name.
+
+- `convert_time` - Convert time between timezones.
+  - Required arguments:
+    - `time` (string): Time in 24-hour format (HH:MM)
+  - Optional arguments:
+    - `source_timezone` (string): Source IANA timezone name.
+    - `target_timezone` (string): Target IANA timezone name.
+
+- `get_time_ago` - Get the time a given number of days ago.
+  - Optional arguments:
+    - `timezone` (string): IANA timezone name.
+"""
+    assert parse_docs_tools(readme) == ["get_current_time", "convert_time", "get_time_ago"]
+
+
+def test_merge_drops_argument_names_listed_as_tools() -> None:
+    base = ServerSnapshot(
+        tools=[
+            ToolInfo(
+                name="convert_time",
+                input_schema={
+                    "properties": {
+                        "source_timezone": {},
+                        "time": {},
+                        "target_timezone": {},
+                    }
+                },
+            )
+        ]
+    )
+    result = _merge(
+        base=base,
+        flag_tools={},
+        flag_names={},
+        hits=[],
+        docs_tools=["convert_time", "source_timezone", "time", "target_timezone"],
+        runtime_names={"convert_time"},
+        attempts=[],
+        notes=[],
+        have_docs=True,
+    )
+    assert result.names == ["convert_time"]
+    assert result.docs_tools == ["convert_time"]
 
 
 def test_static_scan_ts_and_python(tmp_path: Path) -> None:

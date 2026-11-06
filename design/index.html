@@ -24,6 +24,13 @@
   <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4M4 4h12l-2 4 2 4H4"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3 7 7 0 0 0 21 14.5z"/></symbol>
+  <symbol id="i-spin" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-dash" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></symbol>
 </svg>
 
 <header class="tp-nav">
@@ -35,8 +42,9 @@
     <nav class="tp-nav__links" aria-label="Primary">
       <a href="#how">How it works</a>
       <a href="#recent">Recent scans</a>
+      <span class="tp-eyebrow mono" id="ops-status" title="Control plane health">…</span>
       <a href="https://github.com/">GitHub</a>
-      <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" data-theme-toggle aria-label="Switch to light theme">Light</button>
+      <button type="button" class="tp-btn tp-btn--ghost tp-btn--icon" data-theme-toggle aria-label="Switch to light theme"><svg class="tp-icon" aria-hidden="true"><use href="#i-sun"/></svg></button>
     </nav>
   </div>
 </header>
@@ -47,12 +55,6 @@
       <span class="tp-eyebrow tp-eyebrow--accent">Security scanner for MCP tools</span>
       <h1 class="tp-hero__title">Find the tools that hurt before they hurt you.</h1>
       <p class="tp-hero__tagline">Every MCP tool, proven at runtime. Nothing leaves the sandbox.</p>
-      <p class="tp-hero__lede">Paste a GitHub link to an MCP server. ToolPain runs it on a throwaway Vultr VM with no internet, calls every tool, and reports what each one really does versus what it claims.</p>
-      <ul class="tp-promises">
-        <li><svg class="tp-icon tp-icon--sm"><use href="#i-lock"/></svg>Network blocked at runtime</li>
-        <li><svg class="tp-icon tp-icon--sm"><use href="#i-shield"/></svg>gVisor sandbox</li>
-        <li><svg class="tp-icon tp-icon--sm"><use href="#i-trash"/></svg>VM destroyed after every scan</li>
-      </ul>
     </div>
 
     <!-- Intake. JS: validates URL → .tp-input-wrap--valid|--error and fills #repo-chip; BYO toggle reveals [data-byo]. -->
@@ -64,8 +66,8 @@
           <input id="repo" name="repo" type="url" inputmode="url" autocomplete="off" spellcheck="false" required
                  placeholder="https://github.com/owner/repo" value="https://github.com/andrew/playwright-mcp"
                  aria-describedby="repo-help repo-error">
-          <span class="tp-chip tp-chip--valid" id="repo-chip" hidden><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg><span></span></span>
         </div>
+        <span class="tp-chip tp-chip--valid tp-repo-valid" id="repo-chip" hidden><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg><span></span></span>
         <p class="tp-help" id="repo-help">Public repos only. Forks are compared against upstream automatically.</p>
         <p class="tp-error-text" id="repo-error" hidden><svg class="tp-icon"><use href="#i-alert"/></svg>Use a full repo link like https://github.com/owner/repo</p>
       </div>
@@ -75,9 +77,37 @@
         <input id="ref" name="ref" class="tp-input" type="text" placeholder="main" autocomplete="off" spellcheck="false">
       </div>
 
+      <div class="tp-field">
+        <label for="protocol" class="tp-label">Protocol <span class="tp-label__hint">(optional)</span></label>
+        <select id="protocol" name="protocol" class="tp-input">
+          <option value="auto">auto</option>
+          <option value="stdio">stdio</option>
+          <option value="http">http</option>
+          <option value="sse">sse</option>
+        </select>
+      </div>
+
+      <div class="tp-field">
+        <label for="scan-brief" class="tp-label">Scan brief <span class="tp-label__hint">(optional)</span></label>
+        <textarea id="scan-brief" name="scan_brief" class="tp-input" rows="2" maxlength="2000"
+                  placeholder="e.g. Focus on exfil and auth tools; prefer the time server package in this monorepo"
+                  aria-describedby="brief-help"></textarea>
+        <p class="tp-help" id="brief-help">Steers generated launch/probe/oracle code. Never grants host access.</p>
+      </div>
+
       <details class="tp-disclosure">
         <summary>Advanced <span class="tp-eyebrow" id="account-mode" style="margin-left:auto;margin-right:8px">toolpain account</span></summary>
         <div class="tp-disclosure__body">
+          <div class="tp-field">
+            <label for="prefer-subdir" class="tp-label">Package subdirectory <span class="tp-label__hint">(optional)</span></label>
+            <input id="prefer-subdir" name="prefer_subdir" class="tp-input" type="text" placeholder="src/time" autocomplete="off" spellcheck="false">
+            <p class="tp-help">Skip LLM workdir pick and use this monorepo path.</p>
+          </div>
+          <div class="tp-field">
+            <label for="mcp-url" class="tp-label">Existing MCP URL <span class="tp-label__hint">(optional)</span></label>
+            <input id="mcp-url" name="mcp_url" class="tp-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:3000/mcp">
+            <p class="tp-help">Scan an already-running HTTP or SSE server. Localhost HTTP, or public HTTPS. Private and metadata hosts are rejected.</p>
+          </div>
           <div class="tp-row" style="justify-content:space-between;flex-wrap:nowrap;gap:16px">
             <div>
               <div id="byo-label" style="font-size:14px;font-weight:500">Run in my own Vultr account</div>
@@ -109,9 +139,10 @@
         <button type="submit" class="tp-btn tp-btn--primary tp-btn--lg" id="scan-btn">
           Scan it <svg class="tp-icon"><use href="#i-arrow-right"/></svg>
         </button>
+        <p class="tp-help" id="cost-estimate"></p>
         <div class="tp-stack" style="gap:10px">
           <span class="tp-help">Try a demo</span>
-          <div class="tp-row">
+          <div class="tp-demo-row">
             <a class="tp-demo-chip" href="scan.html?state=done&amp;demo=server-filesystem" style="--c:var(--low)"><span class="tp-demo-chip__dot"></span>server-filesystem <span class="muted">clean</span></a>
             <a class="tp-demo-chip" href="scan.html?state=in-progress&amp;demo=playwright-mcp" style="--c:var(--high)"><span class="tp-demo-chip__dot"></span>playwright-mcp <span class="muted">powerful</span></a>
             <a class="tp-demo-chip" href="scan.html?state=in-progress&amp;demo=decoy-trap-server" style="--c:var(--crit)"><span class="tp-demo-chip__dot"></span>decoy-trap-server <span class="muted">flagged</span></a>
@@ -119,6 +150,12 @@
         </div>
       </div>
     </form>
+    <p class="tp-hero__lede">Paste a GitHub link to an MCP server. ToolPain runs it on a throwaway Vultr VM with no internet, calls every tool, and reports what each one really does versus what it claims.</p>
+    <ul class="tp-promises">
+      <li><svg class="tp-icon tp-icon--sm"><use href="#i-lock"/></svg>Network blocked at runtime</li>
+      <li><svg class="tp-icon tp-icon--sm"><use href="#i-shield"/></svg>gVisor sandbox</li>
+      <li><svg class="tp-icon tp-icon--sm"><use href="#i-trash"/></svg>VM destroyed after every scan</li>
+    </ul>
   </section>
 
   <section id="how" class="tp-container tp-container--narrow tp-section">
@@ -139,7 +176,7 @@
     </div>
     <!-- JS replaces rows from GET /api/scans; these are sample rows. Empty state lives in scan.html?state=error. -->
     <div class="tp-table-wrap">
-      <table class="tp-table tp-table--comfy tp-table--min-560" id="recent-table">
+      <table class="tp-table tp-table--comfy tp-recent" id="recent-table">
         <thead><tr><th scope="col">Repository</th><th scope="col">Verdict</th><th scope="col">Findings</th><th scope="col" style="text-align:right">When</th></tr></thead>
         <tbody>
           <tr>

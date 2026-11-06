@@ -106,7 +106,7 @@
           <div class="tp-field">
             <label for="mcp-url" class="tp-label">Existing MCP URL <span class="tp-label__hint">(optional)</span></label>
             <input id="mcp-url" name="mcp_url" class="tp-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:3000/mcp">
-            <p class="tp-help">Scan an already-running HTTP or SSE server. Localhost or https only.</p>
+            <p class="tp-help">Scan an already-running HTTP or SSE server. Localhost HTTP, or public HTTPS. Private and metadata hosts are rejected.</p>
           </div>
           <div class="tp-row" style="justify-content:space-between;flex-wrap:nowrap;gap:16px">
             <div>
@@ -139,6 +139,7 @@
         <button type="submit" class="tp-btn tp-btn--primary tp-btn--lg" id="scan-btn">
           Scan it <svg class="tp-icon"><use href="#i-arrow-right"/></svg>
         </button>
+        <p class="tp-help" id="cost-estimate"></p>
         <div class="tp-stack" style="gap:10px">
           <span class="tp-help">Try a demo</span>
           <div class="tp-demo-row">

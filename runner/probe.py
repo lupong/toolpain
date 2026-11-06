@@ -25,6 +25,15 @@ from sandbox.sandbox import Sandbox
 from sandbox.trace import is_noise_path
 
 TAIL_SEC = 0.5
+OUTPUT_CAP = 8000
+
+
+def cap_output(text: str, limit: int = OUTPUT_CAP) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n…[truncated]"
+
+
 FIXTURE_HOSTS = {"fixture.local"}
 SCHEMA_ERROR_RE = re.compile(
     r"validation|invalid|required|missing|argument|schema|should be|expected", re.IGNORECASE
@@ -322,7 +331,7 @@ async def probe_tools(
             timed_out=o.timed_out,
             retried=retried[name],
             error=o.error,
-            output=o.text[:500],
+            output=cap_output(o.text),
             start=o.start,
             end=o.end,
             exercised=not o.timed_out,

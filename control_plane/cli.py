@@ -67,7 +67,9 @@ def scan_main(argv: list[str] | None = None) -> None:
     parser.add_argument("--timeout", type=int, default=600)
     args = parser.parse_args(argv)
 
-    base = (args.base_url or os.environ.get("CONTROL_PLANE_URL") or "http://127.0.0.1:8000").rstrip("/")
+    base = (args.base_url or os.environ.get("CONTROL_PLANE_URL") or "http://127.0.0.1:8000").rstrip(
+        "/"
+    )
     token = args.api_token or os.environ.get("TOOLPAIN_API_TOKEN")
     payload = scan_payload(
         args.repo,

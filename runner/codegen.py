@@ -667,7 +667,7 @@ async def generate_executable_code(
         probe_py=probe_py,
         oracle_py=oracle_py,
         rationale=rationale[:500],
-        source="llm" if raw else "heuristic",
+        source="heuristic" if errors or not raw else "llm",
         launch_ok=launch_ok,
         probe_ok=probe_ok,
         oracle_ok=oracle_ok,

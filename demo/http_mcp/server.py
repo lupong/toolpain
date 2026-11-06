@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-
 TOOLS = [
     {
         "name": "add",
@@ -47,7 +46,11 @@ class Handler(BaseHTTPRequestHandler):
         method = req.get("method")
         rid = req.get("id")
         if method == "initialize":
-            result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "http-mcp-demo", "version": "0.3"}}
+            result = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "http-mcp-demo", "version": "0.3"},
+            }
         elif method == "tools/list":
             result = {"tools": TOOLS}
         elif method == "tools/call":
@@ -61,7 +64,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send({"jsonrpc": "2.0", "id": rid, "error": {"message": "unknown tool"}}, 200)
                 return
-            result = {"content": [{"type": "text", "text": text}], "isError": name == "fetch_report"}
+            result = {
+                "content": [{"type": "text", "text": text}],
+                "isError": name == "fetch_report",
+            }
         else:
             result = {}
         self._send({"jsonrpc": "2.0", "id": rid, "result": result}, 200)

@@ -82,6 +82,23 @@ class Database:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(scans)")}
             if "owner_hash" not in cols:
                 conn.execute("ALTER TABLE scans ADD COLUMN owner_hash TEXT")
+            for name, decl in (
+                ("error_code", "TEXT"),
+                ("error_detail", "TEXT"),
+                ("estimate_json", "TEXT"),
+            ):
+                if name not in cols:
+                    conn.execute(f"ALTER TABLE scans ADD COLUMN {name} {decl}")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS llm_calls (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  scan_id TEXT NOT NULL,
+                  kind TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                )
+                """
+            )
 
     def create_scan(
         self,
@@ -120,6 +137,8 @@ class Database:
             verdict=row["verdict"],
             findings_count=row["findings_count"] or 0,
             demo=row["demo"],
+            error_code=row["error_code"] if "error_code" in row.keys() else None,
+            error_detail=row["error_detail"] if "error_detail" in row.keys() else None,
         )
 
     def get_token(self, scan_id: str) -> str | None:
@@ -148,6 +167,8 @@ class Database:
                 verdict=r["verdict"],
                 findings_count=r["findings_count"] or 0,
                 demo=r["demo"],
+                error_code=r["error_code"] if "error_code" in r.keys() else None,
+                error_detail=r["error_detail"] if "error_detail" in r.keys() else None,
             )
             for r in rows
         ]
@@ -159,6 +180,8 @@ class Database:
         status: str | None = None,
         verdict: str | None = None,
         findings_count: int | None = None,
+        error_code: str | None = None,
+        error_detail: str | None = None,
     ) -> None:
         fields: list[str] = ["updated_at = ?"]
         vals: list[Any] = [_utcnow().isoformat()]
@@ -171,6 +194,12 @@ class Database:
         if findings_count is not None:
             fields.append("findings_count = ?")
             vals.append(findings_count)
+        if error_code is not None:
+            fields.append("error_code = ?")
+            vals.append(error_code)
+        if error_detail is not None:
+            fields.append("error_detail = ?")
+            vals.append(error_detail[:500])
         vals.append(scan_id)
         with self._lock, self.connect() as conn:
             conn.execute(f"UPDATE scans SET {', '.join(fields)} WHERE id = ?", vals)
@@ -248,10 +277,43 @@ class Database:
             ).fetchone()
             if not row or int(row["quota"]) <= 0:
                 return False
-            conn.execute(
-                "UPDATE api_tokens SET quota = quota - 1 WHERE token_hash = ?", (digest,)
-            )
+            conn.execute("UPDATE api_tokens SET quota = quota - 1 WHERE token_hash = ?", (digest,))
         return True
+
+    def set_estimate(self, scan_id: str, estimate: dict[str, Any] | None) -> None:
+        text = json.dumps(estimate) if estimate is not None else None
+        with self._lock, self.connect() as conn:
+            conn.execute("UPDATE scans SET estimate_json = ? WHERE id = ?", (text, scan_id))
+
+    def get_estimate(self, scan_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT estimate_json FROM scans WHERE id = ?", (scan_id,)
+            ).fetchone()
+        if not row or not row["estimate_json"]:
+            return None
+        loaded = json.loads(row["estimate_json"])
+        return loaded if isinstance(loaded, dict) else None
+
+    def scan_id_for_token(self, token: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT id FROM scans WHERE token = ? LIMIT 1", (token,)).fetchone()
+        return None if not row else str(row["id"])
+
+    def record_llm_call(self, scan_id: str, kind: str) -> None:
+        with self._lock, self.connect() as conn:
+            conn.execute(
+                "INSERT INTO llm_calls (scan_id, kind, created_at) VALUES (?, ?, ?)",
+                (scan_id, kind, _utcnow().isoformat()),
+            )
+
+    def llm_call_counts(self, scan_id: str) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT kind, COUNT(*) AS n FROM llm_calls WHERE scan_id = ? GROUP BY kind",
+                (scan_id,),
+            ).fetchall()
+        return {str(r["kind"]): int(r["n"]) for r in rows}
 
     def set_owner(self, scan_id: str, owner_hash: str) -> None:
         with self._lock, self.connect() as conn:

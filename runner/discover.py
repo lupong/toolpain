@@ -93,25 +93,54 @@ _TABLE_HEADER_WORDS = {"name", "tool", "tools", "description", "parameter", "par
 
 
 def parse_docs_tools(readme: str) -> list[str]:
-    """Regex extraction of tool names from README markdown (used in fake mode)."""
+    """Regex extraction of tool names from README markdown (used in fake mode).
+
+    Nested bullets under a tool, and bullets under a tool subheading, are
+    arguments. They are not extra tools.
+    """
     found: list[str] = []
     tools_level: int | None = None
+    inside_tool_heading = False
+    tool_bullet_indent: int | None = None
+    in_fence = False
     for line in readme.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         heading = _HEADING_RE.match(line)
         if heading:
             level, text = len(heading.group(1)), heading.group(2)
             if tools_level is not None and level <= tools_level:
                 tools_level = None
+                inside_tool_heading = False
+                tool_bullet_indent = None
             if tools_level is not None and level > tools_level:
+                inside_tool_heading = True
                 m = _HEADING_NAME_RE.match(text)
                 if m:
                     found.append(m.group(1))
             elif re.search(r"\btools?\b", text, re.IGNORECASE):
                 tools_level = level
+                inside_tool_heading = False
+                tool_bullet_indent = None
             continue
         if tools_level is not None:
-            m = _BULLET_RE.match(line) or _TABLE_RE.match(line)
-            if m and m.group(1).lower() not in _TABLE_HEADER_WORDS:
+            if inside_tool_heading:
+                continue
+            table = _TABLE_RE.match(line)
+            bullet = _BULLET_RE.match(line)
+            m = bullet or table
+            if not m or m.group(1).lower() in _TABLE_HEADER_WORDS:
+                continue
+            if table:
+                found.append(m.group(1))
+                continue
+            indent = len(line) - len(line.lstrip(" "))
+            if tool_bullet_indent is None or indent < tool_bullet_indent:
+                tool_bullet_indent = indent
+            if indent <= tool_bullet_indent:
                 found.append(m.group(1))
         else:
             m = _TOOLISH_BULLET_RE.match(line)
@@ -386,6 +415,16 @@ async def discover(
     )
 
 
+def _schema_properties(tools: list[ToolInfo]) -> set[str]:
+    """Argument names advertised by a runtime tool schema."""
+    names: set[str] = set()
+    for tool in tools:
+        props = tool.input_schema.get("properties") if isinstance(tool.input_schema, dict) else None
+        if isinstance(props, dict):
+            names.update(str(key) for key in props)
+    return names
+
+
 def _merge(
     *,
     base: ServerSnapshot,
@@ -421,11 +460,14 @@ def _merge(
         e = entry(hit.name)
         e.static_hits.append(hit)
         sources[hit.name].add("S")
-    for name in docs_tools:
+    argument_names = _schema_properties([*base.tools, *flag_tools.values()])
+    known = set(runtime_names) | set(flag_tools) | {hit.name for hit in hits}
+    kept_docs = [name for name in docs_tools if name in known or name not in argument_names]
+    for name in kept_docs:
         entry(name)
         sources[name].add("D")
 
-    doc_set = set(docs_tools)
+    doc_set = set(kept_docs)
     for name, e in by_name.items():
         src = sources[name]
         e.sources = _ordered(src)
@@ -440,7 +482,7 @@ def _merge(
         tools=sorted(by_name.values(), key=lambda t: t.name),
         resources=base.resources,
         prompts=base.prompts,
-        docs_tools=docs_tools,
+        docs_tools=kept_docs,
         flag_candidates=attempts,
         notes=notes,
     )

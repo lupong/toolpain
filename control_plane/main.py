@@ -12,24 +12,29 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from control_plane.certificate import build_certificate, render_html, render_pdf
 from control_plane.cli import scan_main
 from control_plane.config import get_settings
+from control_plane.costs import FIXTURES, build_estimate, load_rate_card, price_actual
 from control_plane.db import Database
+from control_plane.failures import TERMINAL_STATUSES
+from control_plane.llm import chat_json
 from control_plane.models import EventIn, EventOut, Report, ScanCreate, ScanSummary
 from control_plane.provisioner import get_provisioner
 from control_plane.redaction import install_redaction, redact_text
 from control_plane.sample_report import DEMO_REPOS, report_for_demo
-from control_plane.share import compare_reports, sign_share, verify_share
+from control_plane.share import compare_reports, share_expiry, sign_share, verify_share
 
 log = logging.getLogger("toolpain")
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,7 +99,47 @@ class AppState:
         return event
 
     def save_report(self, scan_id: str, report: Report | dict[str, Any]) -> None:
-        self.db.save_report(scan_id, report, self.settings.reports_dir)
+        payload = report.model_dump() if isinstance(report, Report) else dict(report)
+        costs = payload.get("costs") or {}
+        if "actual" not in costs:
+            payload["costs"] = self._price(scan_id, payload)
+        self.db.save_report(scan_id, payload, self.settings.reports_dir)
+
+    def _price(self, scan_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        scan = self.db.get_scan(scan_id)
+        meters = payload.get("meters") or {}
+        counts = self.db.llm_call_counts(scan_id)
+        now = datetime.now(UTC)
+        started = scan.created_at if scan else now
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        duration = meters.get("duration_sec")
+        if duration is None:
+            duration = max(0.0, (now - started).total_seconds())
+        repo_bytes = int(meters.get("repo_bytes") or 0)
+        if not repo_bytes and scan:
+            pinned = FIXTURES.get(scan.repo_url.rstrip("/"))
+            if pinned:
+                repo_bytes = int(pinned["size_kb"]) * 1024
+        provisioner = str(meters.get("provisioner") or "")
+        if not provisioner:
+            provisioner = "vultr" if scan and scan.account_mode == "byo" else "local"
+            if self.settings.provisioner == "vultr" and provisioner == "local":
+                provisioner = "vultr"
+        rounds = int(
+            meters.get("probe_rounds") or payload.get("stats", {}).get("probe_rounds") or 1
+        )
+        return price_actual(
+            card=load_rate_card(),
+            provisioner=provisioner,
+            duration_sec=float(duration),
+            repo_bytes=repo_bytes,
+            codegen_calls=int(meters.get("codegen_calls") or counts.get("codegen") or 0),
+            research_calls=int(meters.get("research_calls") or counts.get("research") or 0),
+            probe_rounds=rounds,
+            runtime=meters.get("runtime") or payload.get("runtime"),
+            estimate=self.db.get_estimate(scan_id),
+        )
 
     def update_scan(self, scan_id: str, **kwargs: Any) -> None:
         self.db.update_scan(scan_id, **kwargs)
@@ -147,8 +192,6 @@ app.add_middleware(RateLimitMiddleware, limit=20, window_sec=60)
 
 @app.get("/api/health")
 def health(state: AppState = Depends(get_state)) -> dict[str, Any]:
-    import os
-
     from control_plane.env_detect import detect
 
     return {
@@ -157,7 +200,7 @@ def health(state: AppState = Depends(get_state)) -> dict[str, Any]:
         "provisioner": state.settings.provisioner,
         "llm_mode": state.settings.llm_mode,
         "codegen_mode": (os.environ.get("CODEGEN_MODE") or "llm").lower(),
-        "version": "0.3.0",
+        "version": "0.4.0",
         "supports": ["stdio", "http", "sse"],
     }
 
@@ -169,7 +212,7 @@ async def create_scan(
     x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
 ) -> ScanSummary:
     if x_api_token and not state.db.consume_quota(x_api_token):
-        raise HTTPException(status_code=429, detail="api token quota exceeded or unknown")
+        raise HTTPException(status_code=429, detail="quota")
     demo = body.demo
     repo_url = body.repo_url
     ref = body.ref or "main"
@@ -183,6 +226,10 @@ async def create_scan(
     summary = state.db.create_scan(
         scan_id, repo_url, ref, token, account_mode=account_mode, demo=demo
     )
+    provisioner = (
+        "vultr" if body.byo_vultr_key or state.settings.provisioner == "vultr" else "local"
+    )
+    state.db.set_estimate(scan_id, build_estimate(repo_url, provisioner))
     if x_api_token:
         state.db.set_owner(scan_id, state.db.hash_token(x_api_token))
     state.emit_event(scan_id, "intake", "info", f"Accepted scan for {repo_url}@{ref}")
@@ -319,15 +366,47 @@ def share_scan(
     return {"token": token, "expires_at": exp, "url": f"/share/{token}"}
 
 
+def _wants_html(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept and "application/json" not in accept.split(",")[0]
+
+
 @app.get("/share/{token}")
-def shared_report(token: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def shared_report(token: str, request: Request, state: AppState = Depends(get_state)) -> Any:
     scan_id = verify_share(token)
     if not scan_id:
+        if _wants_html(request):
+            return RedirectResponse("/scan.html?state=error&reason=share", status_code=302)
         raise HTTPException(status_code=404, detail="share link invalid or expired")
+    if _wants_html(request):
+        return RedirectResponse(f"/scan.html?share={token}", status_code=302)
     report = state.db.get_report(scan_id)
     if not report:
         raise HTTPException(status_code=404, detail="report not ready")
-    return report
+    exp = share_expiry(token)
+    return JSONResponse(
+        report,
+        headers={"X-Share-Expires": datetime.fromtimestamp(exp, UTC).isoformat() if exp else ""},
+    )
+
+
+@app.get("/share/{token}/certificate")
+def shared_certificate_html(token: str, state: AppState = Depends(get_state)) -> HTMLResponse:
+    return HTMLResponse(_certificate_html_for_share(token, state))
+
+
+@app.get("/share/{token}/certificate.pdf")
+def shared_certificate_pdf(token: str, state: AppState = Depends(get_state)) -> Response:
+    scan_id = verify_share(token)
+    if not scan_id:
+        raise HTTPException(status_code=404, detail="share link invalid or expired")
+    cert = _certificate_model(state, scan_id, token=None, via_share=True)
+    pdf = render_pdf(cert)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="toolpain-{scan_id}.pdf"'},
+    )
 
 
 @app.get("/api/compare")
@@ -335,11 +414,14 @@ def compare_scans(
     a: str,
     b: str,
     state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
 ) -> dict[str, Any]:
     left = state.db.get_report(a)
     right = state.db.get_report(b)
     if not left or not right:
         raise HTTPException(status_code=404, detail="both reports must exist")
+    if not _compare_allowed(state, a, b, x_api_token):
+        raise HTTPException(status_code=403, detail="report is private")
     return compare_reports(left, right)
 
 
@@ -354,17 +436,30 @@ def issue_token(
         raise HTTPException(status_code=401, detail="admin token required")
     token = secrets.token_urlsafe(24)
     label = str(body.get("label") or "token")[:80]
-    quota = int(body.get("quota") or 20)
+    if "quota" in body and body.get("quota") is not None:
+        try:
+            quota = int(body.get("quota"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="quota") from exc
+        if quota < 0:
+            raise HTTPException(status_code=422, detail="quota")
+    else:
+        quota = 20
     state.db.issue_api_token(token, label, quota)
     return {"token": token, "label": label, "quota": quota}
 
 
 @app.post("/api/scans/{scan_id}/cancel", status_code=202)
 async def cancel_scan(scan_id: str, state: AppState = Depends(get_state)) -> dict[str, str]:
-    if not state.db.get_scan(scan_id):
+    scan = state.db.get_scan(scan_id)
+    if not scan:
         raise HTTPException(status_code=404, detail="scan not found")
+    if scan.status in TERMINAL_STATUSES:
+        return {"status": scan.status}
     await state.provisioner.cancel_scan(scan_id)
-    state.db.update_scan(scan_id, status="cancelled")
+    state.db.update_scan(
+        scan_id, status="cancelled", error_code="cancelled", error_detail="cancelled"
+    )
     return {"status": "cancelled"}
 
 
@@ -388,13 +483,29 @@ def internal_report(
     _: str = Depends(require_scan_token),
     state: AppState = Depends(get_state),
 ) -> dict[str, str]:
-    if not state.db.get_scan(scan_id):
+    scan = state.db.get_scan(scan_id)
+    if not scan:
         raise HTTPException(status_code=404, detail="scan not found")
+    if scan.status in TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="scan is already finished")
     try:
         report = Report.model_validate(body)
-        payload = report.model_dump()
-    except ValidationError:
-        payload = body
+    except ValidationError as exc:
+        state.emit_event(
+            scan_id,
+            "report",
+            "warn",
+            "Report failed validation",
+            {"code": "report_invalid", "error": "report_invalid"},
+        )
+        state.update_scan(
+            scan_id,
+            status="failed",
+            error_code="report_invalid",
+            error_detail="report_invalid",
+        )
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    payload = report.model_dump()
     state.save_report(scan_id, payload)
     state.update_scan(
         scan_id,
@@ -414,16 +525,11 @@ async def internal_llm(
     # Token must match some active scan
     if not x_scan_token:
         raise HTTPException(status_code=401, detail="invalid scan token")
-    # Accept any known token
-    known = False
-    for s in state.db.list_scans(limit=200):
-        if state.db.get_token(s.id) == x_scan_token:
-            known = True
-            break
-    if not known:
+    scan_id = state.db.scan_id_for_token(x_scan_token)
+    if not scan_id:
         raise HTTPException(status_code=401, detail="invalid scan token")
-    from control_plane.llm import chat_json
-
+    kind_hint = str(body.get("kind") or body.get("schema_hint") or "")
+    state.db.record_llm_call(scan_id, "research" if "research" in kind_hint else "codegen")
     return await chat_json(
         state.settings,
         body.get("messages") or [],
@@ -460,6 +566,7 @@ def _seed_demos(state: AppState) -> None:
             demo=demo_key,
         )
         report = report_for_demo(demo_key, scan_id, meta["repo_url"])
+        state.db.set_estimate(scan_id, build_estimate(meta["repo_url"], "local"))
         state.save_report(scan_id, report)
         state.update_scan(
             scan_id,
@@ -467,6 +574,92 @@ def _seed_demos(state: AppState) -> None:
             verdict=report["verdict"],
             findings_count=len(report.get("findings", [])),
         )
+
+
+def _compare_allowed(state: AppState, a: str, b: str, token: str | None) -> bool:
+    owner_a = state.db.owner_of(a)
+    owner_b = state.db.owner_of(b)
+    if not owner_a and not owner_b:
+        return True
+    if owner_a and owner_b and owner_a == owner_b:
+        return state.db.hash_token(token or "") == owner_a
+    return False
+
+
+def _can_read(state: AppState, scan_id: str, token: str | None) -> bool:
+    owner = state.db.owner_of(scan_id)
+    if not owner:
+        return True
+    return state.db.hash_token(token or "") == owner
+
+
+def _certificate_model(
+    state: AppState, scan_id: str, token: str | None, *, via_share: bool
+) -> dict[str, Any]:
+    scan = state.db.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="scan not found")
+    if not via_share and not _can_read(state, scan_id, token):
+        raise HTTPException(status_code=403, detail="private report")
+    if scan.status != "done":
+        raise HTTPException(
+            status_code=409, detail="certificate is available when the scan is done"
+        )
+    report = state.db.get_report(scan_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="report not ready")
+    return build_certificate(
+        scan.id,
+        repo_url=scan.repo_url,
+        ref=scan.ref,
+        created_at=scan.created_at,
+        updated_at=scan.updated_at,
+        account_mode=scan.account_mode,
+        report=report,
+    )
+
+
+def _certificate_html_for_share(token: str, state: AppState) -> str:
+    scan_id = verify_share(token)
+    if not scan_id:
+        raise HTTPException(status_code=404, detail="share link invalid or expired")
+    return render_html(_certificate_model(state, scan_id, None, via_share=True))
+
+
+@app.post("/api/estimate")
+def estimate(body: dict[str, Any]) -> dict[str, Any]:
+    raw = str(body.get("repo_url") or "")
+    try:
+        created = ScanCreate(repo_url=raw, ref=str(body.get("ref") or "main"))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    provisioner = "vultr" if str(body.get("provisioner") or "") == "vultr" else "local"
+    return build_estimate(created.repo_url, provisioner)
+
+
+@app.get("/api/scans/{scan_id}/certificate")
+def certificate_html(
+    scan_id: str,
+    state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
+) -> HTMLResponse:
+    cert = _certificate_model(state, scan_id, x_api_token, via_share=False)
+    return HTMLResponse(render_html(cert))
+
+
+@app.get("/api/scans/{scan_id}/certificate.pdf")
+def certificate_pdf(
+    scan_id: str,
+    state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
+) -> Response:
+    cert = _certificate_model(state, scan_id, x_api_token, via_share=False)
+    pdf = render_pdf(cert)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="toolpain-{scan_id}.pdf"'},
+    )
 
 
 # Static web UI

@@ -82,10 +82,7 @@ FAKE_EXECUTABLE_CODE = {
         "def next_plans(tools, fixture_url, prior_results):\n"
         "    return []\n"
     ),
-    "oracle_py": (
-        "def review_observations(observations):\n"
-        "    return []\n"
-    ),
+    "oracle_py": ("def review_observations(observations):\n    return []\n"),
     "rationale": "fake-mode executable artifacts",
 }
 

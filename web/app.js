@@ -166,11 +166,35 @@
       btn.disabled = blocked;
       btn.firstChild.textContent = blocked ? 'Confirm the key warning to scan ' : 'Scan it ';
     };
-    repo.addEventListener('input', function () { validate(false); });
+    var estimateEl = $('#cost-estimate');
+    var estimateTimer = null;
+    function refreshEstimate() {
+      if (!estimateEl) return;
+      var m = RE.exec(repo.value.trim());
+      if (!m) { estimateEl.textContent = ''; return; }
+      var provisioner = toggle.getAttribute('aria-pressed') === 'true' ? 'vultr' : 'local';
+      fetch('/api/estimate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_url: repo.value.trim().replace(/\/$/, ''), ref: (($('#ref') && $('#ref').value.trim()) || 'main'), provisioner: provisioner })
+      }).then(function (r) { return r.json(); }).then(function (body) {
+        if (!body || body.available === false || body.total_usd == null) {
+          estimateEl.textContent = 'Estimate unavailable';
+          return;
+        }
+        estimateEl.textContent = 'Estimate ' + money(body.total_usd) + ' before this scan. The report will show the actual.';
+      }).catch(function () { estimateEl.textContent = 'Estimate unavailable'; });
+    }
+    repo.addEventListener('input', function () {
+      validate(false);
+      clearTimeout(estimateTimer);
+      estimateTimer = setTimeout(refreshEstimate, 250);
+    });
     repo.addEventListener('blur', function () { validate(repo.value.trim() !== ''); });
     toggle.addEventListener('click', function () {
       toggle.setAttribute('aria-pressed', String(toggle.getAttribute('aria-pressed') !== 'true'));
       syncByo();
+      refreshEstimate();
     });
     ack.addEventListener('change', syncByo);
     intake.addEventListener('submit', function (e) {
@@ -248,6 +272,24 @@
           location.href = 'scan.html?id=' + encodeURIComponent(j.id) + '&state=in-progress&demo=' + encodeURIComponent(demo);
         });
       });
+      a.addEventListener('mouseenter', function () {
+        var href = a.getAttribute('href') || '';
+        var demo = (new URLSearchParams((href.split('?')[1] || ''))).get('demo');
+        var demoRepos = {
+          'server-filesystem': 'https://github.com/modelcontextprotocol/servers',
+          'playwright-mcp': 'https://github.com/microsoft/playwright-mcp',
+          'decoy-trap-server': 'https://github.com/lupong/toolpain'
+        };
+        if (!demo || !estimateEl || !demoRepos[demo]) return;
+        fetch('/api/estimate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo_url: demoRepos[demo], ref: 'main', provisioner: 'local' })
+        }).then(function (r) { return r.json(); }).then(function (body) {
+          if (!body || body.total_usd == null) { estimateEl.textContent = 'Estimate unavailable'; return; }
+          estimateEl.textContent = 'Estimate ' + money(body.total_usd) + ' before this scan. The report will show the actual.';
+        }).catch(function () { estimateEl.textContent = 'Estimate unavailable'; });
+      });
     });
 
     // Recent scans from API
@@ -319,6 +361,7 @@
   var params = new URLSearchParams(location.search);
   var STATES = ['in-progress', 'done', 'error'];
   var scanId = params.get('id');
+  var shareToken = params.get('share');
   var es = null;
   var replayTimer = null;
   var secs = scanId ? 0 : 161;
@@ -359,8 +402,16 @@
     if (s === 'done' && cy) { cy.resize(); cy.fit(undefined, 24); }
   }
 
+  var PANEL = {
+    invalid_repo: 'invalid', repo_unavailable: 'private', ref_missing: 'failed',
+    build_failed: 'build', launch_failed: 'build', no_mcp_server: 'failed',
+    probe_timeout: 'timeout', report_invalid: 'failed', provision_failed: 'vm',
+    byo_rejected: 'key', cancelled: 'cancelled', internal: 'failed', share: 'share'
+  };
+
   function showError(reason, detail) {
-    var known = { invalid: 1, private: 1, build: 1, vm: 1, key: 1, timeout: 1, failed: 1, cancelled: 1 };
+    if (PANEL[reason]) reason = PANEL[reason];
+    var known = { invalid: 1, private: 1, build: 1, vm: 1, key: 1, timeout: 1, failed: 1, cancelled: 1, share: 1 };
     if (!known[reason]) reason = 'failed';
     document.body.setAttribute('data-error', reason);
     var repoLabel = $('#repo-chip-name') ? $('#repo-chip-name').textContent : '';
@@ -372,21 +423,24 @@
     if (detail && reason === 'vm' && $('#err-vm-detail')) $('#err-vm-detail').textContent = detail;
     if (detail && reason === 'key' && $('#err-key-detail')) $('#err-key-detail').textContent = detail.replace(/^Scan failed:\s*/, '');
     if (detail && reason === 'failed' && $('#err-failed-detail')) $('#err-failed-detail').textContent = detail.replace(/^Scan failed:\s*/, '');
+    if (reason === 'timeout') {
+      var strong = document.querySelector('#err-timeout strong');
+      if (strong) strong.textContent = detail || 'Scan timed out. This is a partial report.';
+      var note = $('#err-timeout-detail');
+      if (note) note.textContent = 'Unprobed tools are marked not observed. The environment was destroyed.';
+    }
+    if (reason === 'build' && !detail && $('#err-build-log')) {
+      $('#err-build-log').textContent = 'No build log was recorded.';
+    }
     var bad = $('#bad-url');
     if (bad && params.get('url')) bad.value = params.get('url');
     setState('error');
   }
 
-  function classify(status, error, msg) {
+  function classify(status, error) {
+    if (error && PANEL[error]) return PANEL[error];
     if (status === 'timeout') return 'timeout';
     if (status === 'cancelled') return 'cancelled';
-    if (error) return error;
-    var m = (msg || '').toLowerCase();
-    if (m.indexOf('401') >= 0 || m.indexOf('api key') >= 0 || m.indexOf('unauthorized') >= 0) return 'key';
-    if (m.indexOf('build') >= 0 || m.indexOf('npm') >= 0) return 'build';
-    if (m.indexOf('vultr') >= 0 || m.indexOf('instance') >= 0) return 'vm';
-    if (m.indexOf('not found') >= 0 || m.indexOf('private') >= 0) return 'private';
-    if (m.indexOf('invalid') >= 0) return 'invalid';
     return 'failed';
   }
 
@@ -597,12 +651,15 @@
     if (report.verdict === 'clean') return 'No pain found.';
     if (report.verdict === 'over_privileged') {
       var extra = tools.filter(function (t) { return t.verdict === 'exceeds_claim'; }).length;
-      return 'Over-privileged: ' + extra + ' tools can do more than they claim.';
+      var noun = extra === 1 ? 'tool' : 'tools';
+      return 'Over-privileged: ' + extra + ' ' + noun + ' can do more than they claim.';
     }
     if (report.verdict === 'suspicious') return 'Suspicious: worth a closer look.';
     var crit = findings.filter(function (f) { return f.severity === 'critical'; }).length;
-    var n = crit || findings.length || 1;
-    return 'Ouch: ' + n + ' critical finding' + (n === 1 ? '' : 's') + '.';
+    if (crit) return 'Ouch: ' + crit + ' critical finding' + (crit === 1 ? '' : 's') + '.';
+    var topSev = (findings[0] && findings[0].severity) || 'high';
+    var n = findings.filter(function (f) { return f.severity === topSev; }).length || 1;
+    return 'Ouch: ' + n + ' ' + topSev + ' finding' + (n === 1 ? '' : 's') + '.';
   }
 
   function lede(report) {
@@ -625,6 +682,14 @@
     }
     if (report.verdict === 'over_privileged') {
       return "Use the least-privilege config to turn off tools you don't need.";
+    }
+    if (report.verdict === 'suspicious') {
+      if (!(report.tools || []).length) {
+        return 'Nothing spoke MCP. Check the ref, the subdirectory, and the launch log.';
+      }
+      var unseen = (report.tools || []).every(function (t) { return t.verdict === 'not_observed'; });
+      if (unseen) return 'The server started, and no tool actually ran. Treat this as incomplete.';
+      return "Read the findings before you add this server. The least-privilege config drops the unexpected tools.";
     }
     if (report.verdict === 'flagged') {
       var tool = top && top.tool;
@@ -774,13 +839,14 @@
     var stats = report.stats || {};
     var statHost = $('#stats');
     if (statHost) {
+      var listedOnly = report.coverage === 'list_only';
       var tiles = [
         ['Tools found', stats.tools != null ? stats.tools : (report.tools || []).length, ''],
-        ['Undocumented', stats.undocumented || 0, stats.undocumented ? 'tp-stat--high' : ''],
-        ['Critical-tier tools', stats.critical_tier || 0, stats.critical_tier ? 'tp-stat--critical' : ''],
+        ['Undocumented', listedOnly ? '—' : (stats.undocumented || 0), !listedOnly && stats.undocumented ? 'tp-stat--high' : ''],
+        ['Critical-tier tools', listedOnly ? '—' : (stats.critical_tier || 0), !listedOnly && stats.critical_tier ? 'tp-stat--critical' : ''],
         ['Toxic combos', stats.toxic_combos != null ? stats.toxic_combos : (report.toxic_combos || []).length, (stats.toxic_combos || (report.toxic_combos || []).length) ? 'tp-stat--high' : ''],
-        ['Undeclared egress hosts', stats.egress_attempted || 0, stats.egress_attempted ? 'tp-stat--critical' : ''],
-        ['Decoy reads', stats.decoy_reads || 0, stats.decoy_reads ? 'tp-stat--critical tp-stat--alert' : '']
+        ['Undeclared egress hosts', listedOnly ? '—' : (stats.egress_attempted || 0), !listedOnly && stats.egress_attempted ? 'tp-stat--critical' : ''],
+        ['Decoy reads', listedOnly ? '—' : (stats.decoy_reads || 0), !listedOnly && stats.decoy_reads ? 'tp-stat--critical tp-stat--alert' : '']
       ];
       clear(statHost);
       tiles.forEach(function (tile) {
@@ -808,6 +874,21 @@
         if (i === 0) span.insertBefore(svgIcon('#i-lock'), span.firstChild);
         recap.appendChild(span);
       });
+    }
+    var banner = $('#list-only-banner');
+    if (banner) banner.hidden = report.coverage !== 'list_only';
+    var costLine = $('#cost-line');
+    if (costLine) {
+      var costs = report.costs || {};
+      var actual = costs.actual && costs.actual.total_usd;
+      var est = costs.estimate && costs.estimate.total_usd;
+      if (actual == null && est == null) {
+        costLine.textContent = '';
+      } else {
+        var delta = costs.delta_usd;
+        var deltaText = delta == null ? 'delta unavailable' : ((delta > 0 ? '+' : '') + money(delta));
+        costLine.textContent = 'Estimate ' + (est == null ? 'unavailable' : money(est)) + ' · Actual ' + money(actual) + ' · ' + deltaText;
+      }
     }
     var doneText = $('#done-meta-text');
     if (doneText) {
@@ -840,10 +921,27 @@
     if ($('#tab-graph') && $('#tab-graph').getAttribute('aria-selected') === 'true') initGraph();
   }
 
+  function money(n) {
+    var v = Number(n);
+    if (!isFinite(v)) return '—';
+    return (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+  }
+
   function renderTools(tools) {
     var table = $('#tools-table');
     if (!table) return;
     $$('tbody', table).forEach(function (tb) { tb.remove(); });
+    if (!tools.length) {
+      var empty = document.createElement('tbody');
+      var row = document.createElement('tr');
+      var cell = document.createElement('td');
+      cell.colSpan = 6;
+      cell.textContent = 'No tools were discovered.';
+      row.appendChild(cell);
+      empty.appendChild(row);
+      table.appendChild(empty);
+      return;
+    }
     tools.forEach(function (t, index) {
       var priv = PRIV[t.privilege] || ['Info', '#s-info', 'tp-badge--info', 0];
       var verd = TVERDICT[t.verdict] || ['confirmed', '#i-check', 'tp-verdict--confirmed', 1];
@@ -1180,6 +1278,8 @@
             });
         };
       }
+      wireRecordLinks(id, null);
+      wireCompare(id);
       return report;
     });
   }
@@ -1202,7 +1302,15 @@
       } else if (data.status === 'cancelled') {
         showCancelled();
       } else if (data.status === 'timeout') {
-        loadReport(scanId).then(function () { showError('timeout', data.detail); }, function () { showError('timeout', data.detail); });
+        loadReport(scanId).then(function (report) {
+          showError('timeout', data.detail);
+          var open = document.querySelector('#err-timeout [data-set-state]');
+          if (open) open.hidden = !report;
+        }, function () {
+          showError('timeout', data.detail);
+          var open = document.querySelector('#err-timeout [data-set-state]');
+          if (open) open.hidden = true;
+        });
       } else {
         showError(classify(data.status, data.error, data.detail), data.detail);
       }
@@ -1268,13 +1376,70 @@
     });
   }
 
-  if (scanId) {
+  function wireRecordLinks(id, share) {
+    var panel = $('#record-panel');
+    var review = $('#review-record');
+    var pdf = $('#download-pdf');
+    var frame = $('#certificate-frame');
+    var htmlUrl = share ? ('/share/' + encodeURIComponent(share) + '/certificate') : ('/api/scans/' + encodeURIComponent(id) + '/certificate');
+    var pdfUrl = htmlUrl + '.pdf';
+    if (panel) panel.hidden = false;
+    if (review) review.hidden = false;
+    if (frame) frame.src = htmlUrl;
+    if (pdf) { pdf.hidden = false; pdf.href = pdfUrl; }
+  }
+
+  function wireCompare(id) {
+    var btn = $('#compare-btn');
+    var input = $('#compare-with');
+    var out = $('#compare-result');
+    if (!btn || !id) return;
+    btn.hidden = false;
+    if (input) input.hidden = false;
+    btn.onclick = function () {
+      var other = input ? input.value.trim() : '';
+      if (!other || !out) return;
+      fetch('/api/compare?a=' + encodeURIComponent(id) + '&b=' + encodeURIComponent(other))
+        .then(function (r) {
+          if (r.status === 403) throw new Error('private');
+          if (!r.ok) throw new Error('missing');
+          return r.json();
+        })
+        .then(function (delta) {
+          var added = (delta.tools_added || []).concat(delta.findings_added || []);
+          var removed = (delta.tools_removed || []).concat(delta.findings_removed || []);
+          if (!added.length && !removed.length) out.textContent = 'These scans match.';
+          else out.textContent = 'Added ' + (added.join(', ') || 'none') + '. Removed ' + (removed.join(', ') || 'none') + '.';
+        })
+        .catch(function (ex) {
+          out.textContent = ex.message === 'private' ? 'The other report is private.' : 'Both reports must exist.';
+        });
+    };
+  }
+
+  if (shareToken) {
+    setState('done');
+    fetch('/share/' + encodeURIComponent(shareToken), { headers: { Accept: 'application/json' } }).then(function (r) {
+      if (!r.ok) { showError('share'); return null; }
+      var exp = r.headers.get('X-Share-Expires');
+      return r.json().then(function (report) {
+        renderReport(report);
+        ['#share-report', '#replay-scan', '#cancel-scan'].forEach(function (sel) {
+          var node = $(sel);
+          if (node) node.hidden = true;
+        });
+        if (exp) setText('#share-expiry', 'Link expires ' + exp);
+        wireRecordLinks(report.scan_id, shareToken);
+        wireCompare(report.scan_id);
+      });
+    }).catch(function () { showError('share'); });
+  } else if (scanId) {
     resetLive();
     setState('in-progress');
     setText('#verdict-title', 'Loading report…');
     setText('#verdict-text', '');
     setText('#verdict-rec', '');
-    ['#p-findings', '#p-tools', '#p-combos', '#p-network', '#p-drift', '#top-findings', '#stats'].forEach(function (sel) {
+    ['#p-findings', '#p-network', '#p-drift', '#top-findings', '#stats'].forEach(function (sel) {
       var node = $(sel);
       if (node) clear(node);
     });
@@ -1299,7 +1464,12 @@
       setText('#scan-id', 'scan ' + s.id);
       setText('#account-mode-live', s.account_mode === 'byo' ? 'your account' : 'toolpain account');
       document.title = 'Scan ' + s.id + ' · ToolPain';
-      if (s.status === 'done') loadReport(scanId);
+      if (s.status === 'done') {
+        loadReport(scanId).then(function () {
+          wireRecordLinks(scanId, null);
+          wireCompare(scanId);
+        });
+      }
       else if (s.status === 'failed' || s.status === 'cancelled' || s.status === 'timeout') {
         fetch('/api/scans/' + encodeURIComponent(scanId) + '/log').then(function (r) { return r.json(); }).then(function (events) {
           var last = null;
@@ -1619,7 +1789,8 @@
       var flagged = cy.nodes('.flagged');
       if (window.matchMedia('(max-width: 720px)').matches) {
         cy.minZoom(1);
-        var hood = flagged.length ? flagged.closedNeighborhood() : cy.elements();
+        var server = cy.$('#server');
+        var hood = flagged.length ? flagged.closedNeighborhood() : (server.length ? server.closedNeighborhood() : cy.elements());
         cy.fit(hood, 16);
       }
       var pick = flagged.length ? flagged[0] : cy.nodes()[0];

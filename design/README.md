@@ -41,9 +41,9 @@ Light-theme severity colors are darkened so they pass 4.5:1 as text on white. Wh
 
 | Component | Classes |
 |---|---|
-| Buttons | `.tp-btn` + `--primary` `--secondary` `--ghost` `--danger`, sizes `--lg` `--sm` `--icon`; `:disabled` styled |
+| Buttons | `.tp-btn` + `--primary` `--secondary` `--ghost` `--danger`, sizes `--lg` `--sm` `--icon` (40×40 sun/moon, `aria-label` only); `:disabled` styled |
 | Inputs | `.tp-field`, `.tp-label`, `.tp-help`, `.tp-error-text`, `.tp-input` + `--valid` `--error`, `.tp-input-wrap` + `--valid` `--error` (icon + chip) |
-| Chips | `.tp-chip` + `--repo` `--valid` `--tool`, `.tp-demo-chip` (`--c` sets the dot color) |
+| Chips | `.tp-chip` + `--repo` `--valid` `--tool`, `.tp-repo-valid` (owner/repo on its own line under the URL), `.tp-demo-chip` (`--c` sets the dot color). Demo chips wrap on desktop and stack full-width at ≤720px |
 | Toggle | `button.tp-toggle[aria-pressed]` |
 | Disclosure | `details.tp-disclosure` > `summary` + `.tp-disclosure__body` |
 | Warning panel | `.tp-warning`, `.tp-warning__title`, `.tp-check` |
@@ -57,12 +57,12 @@ Light-theme severity colors are darkened so they pass 4.5:1 as text on white. Wh
 | Log console | `.tp-log__body` > `.tp-log__line--info\|warn\|alert` > `__ts` `__lvl` `__stage` `__msg` |
 | Toast | `.tp-toast-region` > `.tp-toast--critical` > `__icon` `__body` `__title` `__close` |
 | Tabs | `.tp-tabs[role=tablist]` > `.tp-tab[role=tab][aria-selected]` + `__count`; `.tp-tabpanel` |
-| Summary | `.tp-verdict-hero`, `.tp-sevcounts` > `.tp-sevcount`, `.tp-stats` > `.tp-stat` + `--high` `--critical` `--alert`, `.tp-recap` |
-| Tables | `.tp-table-wrap` (scrolls on mobile), `.tp-table` + `--comfy` `--expandable` `--min-560\|680\|820`, `.tp-sort`, `.tp-rowtoggle[aria-expanded]`, `.tp-row--flagged`, `.tp-row-detail` > `__grid` `__k`, `.tp-trace` |
+| Summary | `.tp-verdict-hero`, `.tp-sevcounts` > `.tp-sevcount`, `.tp-topfindings`, `.tp-stats` > `.tp-stat` + `--high` `--critical` `--alert` (2 columns at ≤560px), `.tp-recap` |
+| Tables | `.tp-table-wrap` (scrolls on mobile), `.tp-table` + `--comfy` `--expandable` `--min-560\|680\|820`, `.tp-recent` (phone cards via `.tp-recent__desk` / `.tp-recent__phone` / `.tp-recent__count` / `.tp-recent__when`), `.tp-sort`, `.tp-rowtoggle[aria-expanded]`, `.tp-row--flagged`, `.tp-row-detail` > `__grid` `__k`, `.tp-trace`. At ≤720px each tool is a card: name, tier, verdict, sources |
 | Code block | `.tp-code` > `pre` + `.tp-code__copy` (`.is-copied`) |
 | Finding card | `.tp-findings-group--{sev}` > `__title`; `.tp-finding` > `__meta` `__id` `__title` `__explain` `__rec` |
 | Toxic combo | `.tp-combo` > `__head` `__risk` `__pair` `__why` |
-| Graph | `.tp-graph` (cytoscape container), `.tp-graph-toolbar`, `.tp-legend` (`__line--claimed\|toxic`, `__x`), `.tp-sidepanel` |
+| Graph | `.tp-graph` (cytoscape container), `.tp-graph-toolbar`, `.tp-graph-list` (text chains from “Show as list”), `.tp-legend` (`__line--claimed\|toxic`, `__x`), `.tp-sidepanel` |
 | Drift | `.tp-drift-counts`, `pre.tp-diff` > `span.add` / `span.hunk` |
 | Banners / states | `.tp-banner--partial`, `.tp-states` > `.tp-state` (+ `--empty`), `__title` `__text` `__icon` |
 | Layout | `.tp-container` (+ `--narrow`), `.tp-split` > `__main` `__side` (+ `--side-first`), `.tp-grid-auto`, `.tp-stack`, `.tp-row`, `.tp-eyebrow` |
@@ -72,7 +72,7 @@ Light-theme severity colors are darkened so they pass 4.5:1 as text on white. Wh
 Node classes: `server`, `tool`, `flagged`, `cap`, `host`, `blocked`, `decoy`.
 Edge classes: `member` (server→tool), `observed` (solid), `claimed` (dashed), `exceeds` (orange), `toxic` (4.5px crit), `blocked` (crit with a "×" label).
 
-`graphStyle()` in `app.js` reads colors from the CSS tokens, so both themes work. The demo uses a `preset` layout with fixed positions. For real reports, switch to columns by node type (for example a `breadthfirst` layout rooted at the server).
+`graphStyle()` in `app.js` reads colors from the CSS tokens, so both themes work. Nodes are placed in columns by kind: server, tool, capability, host/decoy. On a phone the graph opens on the flagged tool's neighborhood, and “Show as list” prints each chain as text.
 
 ## Accessibility
 

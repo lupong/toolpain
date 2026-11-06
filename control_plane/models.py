@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -85,11 +87,41 @@ class ScanCreate(BaseModel):
     @field_validator("mcp_url")
     @classmethod
     def validate_mcp_url(cls, v: str | None) -> str | None:
+        """Allow localhost HTTP, or HTTPS that is not a private, link-local, or metadata host.
+
+        Userinfo is rejected. Raw IPs in private, loopback, link-local, reserved, or
+        multicast ranges are rejected. Hostnames that are cloud metadata names are
+        rejected. Other HTTPS hostnames are accepted without a DNS lookup so intake
+        does not depend on the network.
+        """
         if v is None or not str(v).strip():
             return None
         v = str(v).strip()
-        if not v.startswith(("http://127.0.0.1", "http://localhost", "https://")):
-            raise ValueError("mcp_url must be localhost or https")
+        parsed = urlparse(v)
+        if parsed.username or parsed.password:
+            raise ValueError("mcp_url must not include userinfo")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme == "http" and host in {"127.0.0.1", "localhost"}:
+            return v
+        if parsed.scheme != "https" or not host:
+            raise ValueError("mcp_url must be http://127.0.0.1, http://localhost, or https")
+        if host in {"169.254.169.254", "metadata.google.internal"} or host.endswith(
+            ".metadata.internal"
+        ):
+            raise ValueError("mcp_url host is not allowed")
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return v
+        if (
+            ip.is_private
+            or ip.is_link_local
+            or ip.is_loopback
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError("mcp_url must not be a private or link-local address")
         return v
 
 
@@ -104,6 +136,8 @@ class ScanSummary(BaseModel):
     verdict: OverallVerdict | None = None
     findings_count: int = 0
     demo: str | None = None
+    error_code: str | None = None
+    error_detail: str | None = None
 
 
 class EventIn(BaseModel):
@@ -162,12 +196,20 @@ class EgressAttempt(BaseModel):
     blocked: bool = True
 
 
+class ReportError(BaseModel):
+    code: str
+    detail: str | None = None
+
+
 class Report(BaseModel):
     scan_id: str
     repo: dict[str, Any]
     verdict: OverallVerdict
     stats: dict[str, Any]
     tools: list[ToolReport]
+    coverage: Literal["full", "list_only"] | None = None
+    partial: bool = False
+    error: ReportError | None = None
     toxic_combos: list[ToxicCombo] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     egress: dict[str, Any] = Field(default_factory=dict)

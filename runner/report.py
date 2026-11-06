@@ -39,7 +39,11 @@ def _tool_entry(
     probe = data.probes.get(tool.name)
     assessment = analysis.assessments[tool.name]
     profile = data.profiles.get(tool.name)
-    evidence = [a.evidence for a in analysis.anomalies if a.tool == tool.name and a.evidence]
+    evidence = [
+        (a.evidence[:2000] + "\n…[truncated]") if len(a.evidence) > 2000 else a.evidence
+        for a in analysis.anomalies
+        if a.tool == tool.name and a.evidence
+    ]
     downstream = analysis.downstream[tool.name]
     return {
         "name": tool.name,
@@ -61,7 +65,7 @@ def _tool_entry(
     }
 
 
-def _findings(analysis: AnalysisResult) -> list[dict[str, Any]]:
+def _findings(analysis: AnalysisResult, data: AnalysisInput) -> list[dict[str, Any]]:
     raw: list[dict[str, Any]] = []
     for a in analysis.anomalies:
         raw.append(
@@ -73,6 +77,20 @@ def _findings(analysis: AnalysisResult) -> list[dict[str, Any]]:
                 "evidence": a.evidence,
                 "explanation": a.explanation,
                 "recommendation": a.recommendation,
+            }
+        )
+    for name, probe in data.probes.items():
+        if not probe.timed_out:
+            continue
+        raw.append(
+            {
+                "severity": "medium",
+                "type": "probe_timeout",
+                "tool": name,
+                "title": f"{name} timed out",
+                "evidence": (probe.error or probe.output or "")[:500],
+                "explanation": f"{name} did not finish within the per-tool limit.",
+                "recommendation": "Treat this tool as not observed and re-scan if it should have run.",
             }
         )
     for d in analysis.discrepancies:
@@ -97,6 +115,10 @@ def overall_verdict(
     types = {f["type"] for f in findings}
     if types & ANOMALY_VERDICT_KINDS:
         return "flagged"
+    if not tools:
+        return "suspicious"
+    if tools and all(t.get("verdict") == "not_observed" for t in tools):
+        return "suspicious"
     suspicious = {"undocumented_tool", "fork_added_tool", "hidden_behind_flag", "prompt_injection"}
     medium_anomaly = any(a.severity in {"medium", "high", "critical"} for a in analysis.anomalies)
     if types & suspicious or medium_anomaly:
@@ -175,7 +197,7 @@ def build_report(
     """Return the report dict (validated against the control-plane ``Report`` model)."""
     tool_entries = [_tool_entry(t, data, analysis) for t in data.discovery.tools]
     tool_entries.sort(key=lambda t: (tier_rank(t["privilege"]), t["name"]))
-    findings = _findings(analysis)
+    findings = _findings(analysis, data)
     verdict = overall_verdict(findings, tool_entries, analysis)
     attempted = [
         {"host": a.host, "tool": a.tool, "blocked": a.blocked} for a in analysis.egress.attempted

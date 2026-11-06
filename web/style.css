@@ -223,6 +223,7 @@ p { margin: 0; }
 .tp-card, .tp-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .tp-card { padding: clamp(20px, 3vw, 32px); }
 .tp-panel__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); padding: var(--s4) 20px; border-bottom: 1px solid var(--border); }
+.tp-record__frame { display: block; width: 100%; height: min(70vh, 720px); min-height: 420px; border: 0; background: #fff; }
 .tp-panel__title { font-size: 16px; font-weight: 600; }
 .tp-panel__body { padding: 20px; }
 
@@ -385,7 +386,7 @@ p { margin: 0; }
   .tp-stat__value { font-size: 24px; }
   .tp-scanbar__inner { flex-wrap: wrap; }
   .tp-scanbar .tp-wordmark { order: 1; }
-  .tp-scanbar__meta { order: 2; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
+  .tp-scanbar__meta { order: 2; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
   .tp-scanbar__end { order: 3; flex: 1 1 100%; justify-content: space-between; margin-left: 0; }
   #account-mode-live { display: none; }
   .tp-chip--repo #repo-chip-name { display: inline-block; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }

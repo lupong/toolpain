@@ -54,6 +54,9 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    env_name = os.environ.get("TOOLPAIN_ENV", "local").lower()
+    if env_name in {"prod", "staging"} and not os.environ.get("TOOLPAIN_ADMIN_TOKEN"):
+        raise RuntimeError("TOOLPAIN_ADMIN_TOKEN is required when TOOLPAIN_ENV is prod or staging")
     root = Path(__file__).resolve().parents[1]
     data = Path(os.environ.get("TOOLPAIN_DATA_DIR", str(root / "data")))
     return Settings(

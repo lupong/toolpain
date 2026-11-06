@@ -21,6 +21,19 @@ def sign_share(scan_id: str, *, ttl_sec: int = 86_400) -> tuple[str, int]:
     return token, exp
 
 
+def share_expiry(token: str) -> int | None:
+    """Unix expiry of a valid token, or None when the token is bad or expired."""
+    if verify_share(token) is None:
+        return None
+    try:
+        pad = "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode(token + pad).decode()
+        _scan_id, exp_s, _sig = raw.rsplit(".", 2)
+        return int(exp_s)
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
 def verify_share(token: str) -> str | None:
     """Return scan_id if the token is valid and unexpired."""
     try:
@@ -53,4 +66,7 @@ def compare_reports(a: dict, b: dict) -> dict:
         "finding_types_added": sorted(t for t in (types_b - types_a) if t),
         "finding_types_removed": sorted(t for t in (types_a - types_b) if t),
         "verdict_changed": a.get("verdict") != b.get("verdict"),
+        "findings_added": sorted(t for t in (types_b - types_a) if t),
+        "findings_removed": sorted(t for t in (types_a - types_b) if t),
+        "verdict": {"a": a.get("verdict"), "b": b.get("verdict")},
     }
