@@ -1,4 +1,4 @@
-"""M2 smoke: fake provisioner full scan + UI assets present (Playwright optional)."""
+"""M2 smoke: demo provisioner full scan + UI assets present (Playwright optional)."""
 
 from __future__ import annotations
 
@@ -13,17 +13,17 @@ from fastapi.testclient import TestClient
 
 
 @pytest.mark.smoke
-def test_fake_scan_and_ui_assets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+def test_demo_scan_and_ui_assets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
 
     import control_plane.main as main_mod
     from control_plane.main import AppState, app
-    from control_plane.provisioner.fake import FakeProvisioner
+    from control_plane.provisioner.demo import DemoProvisioner
 
     state = AppState()
-    state.provisioner = FakeProvisioner(
+    state.provisioner = DemoProvisioner(
         emit_event=state.emit_event,
         save_report=state.save_report,
         update_scan=state.update_scan,
@@ -94,17 +94,17 @@ def test_playwright_demo_reports_fit_a_phone(
     except Exception:
         pytest.skip("playwright not installed")
 
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
 
     import control_plane.main as main_mod
     from control_plane.main import AppState
-    from control_plane.provisioner.fake import FakeProvisioner
+    from control_plane.provisioner.demo import DemoProvisioner
 
     previous = main_mod.STATE
     state = AppState()
-    state.provisioner = FakeProvisioner(
+    state.provisioner = DemoProvisioner(
         emit_event=state.emit_event,
         save_report=state.save_report,
         update_scan=state.update_scan,

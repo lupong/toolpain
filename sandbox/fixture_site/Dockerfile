@@ -1,4 +1,5 @@
 FROM python:3.12-slim
-WORKDIR /site
+COPY server.py /srv/fixture_server.py
 COPY *.html /site/
-CMD ["python", "-m", "http.server", "80", "--directory", "/site"]
+WORKDIR /site
+CMD ["python", "/srv/fixture_server.py"]

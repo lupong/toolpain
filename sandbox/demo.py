@@ -1,4 +1,4 @@
-"""FakeSandbox: replays a recorded trace fixture so the pipeline runs without Docker.
+"""DemoSandbox: replays a recorded trace fixture so the pipeline runs without Docker.
 
 It satisfies the same ``Sandbox`` protocol as :class:`sandbox.sandbox.DockerSandbox`. The
 target server is run as a *local process* via ``runner.launch.local_launcher``, which only
@@ -34,10 +34,10 @@ def load_fixture(path: Path = DECOY_TRAP_FIXTURE) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-class FakeSandbox:
+class DemoSandbox:
     def __init__(
         self,
-        scan_id: str = "fake",
+        scan_id: str = "demo",
         *,
         fixture: dict[str, Any] | None = None,
         script: Path = DECOY_SERVER,
@@ -56,7 +56,7 @@ class FakeSandbox:
         self._started_at = 0.0
         self.decoys: DecoySet
 
-    async def __aenter__(self) -> FakeSandbox:
+    async def __aenter__(self) -> DemoSandbox:
         await self.start()
         return self
 
@@ -69,7 +69,7 @@ class FakeSandbox:
         await self.stop()
 
     async def start(self) -> None:
-        self._root = Path(tempfile.mkdtemp(prefix=f"tp_fake_{self.scan_id}_"))
+        self._root = Path(tempfile.mkdtemp(prefix=f"tp_demo_{self.scan_id}_"))
         self.decoys = plant_decoys(self._root / "workspace", self.scan_id)
         self._events, self._records = [], []
 

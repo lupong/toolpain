@@ -1,14 +1,14 @@
 #cloud-config
 # ToolPain scanner VM bootstrap. Placeholders replaced before base64 encoding:
 #   {{SCAN_ID}} {{REPO_URL}} {{REF}} {{TOKEN}} {{CONTROL_PLANE_URL}}
-#   {{PREFER_SUBDIR}} {{SCAN_BRIEF_B64}}
-package_update: true
-packages:
-  - docker.io
-  - python3
-  - python3-pip
-  - git
-  - curl
+#   {{LLM_MODE}} {{PREFER_SUBDIR}} {{SCAN_BRIEF_B64}} {{TOOLPAIN_MAX_PROFILES}}
+# Snapshot images already have Docker + /opt/toolpain. Skip apt churn when marked.
+#
+# IMPORTANT: keep every line under each ``content: |`` indented deeper than
+# ``content:``. Unindented lines (e.g. nested Python heredocs) break YAML and
+# cloud-init will skip write_files — the scanner then never starts.
+package_update: false
+packages: []
 
 write_files:
   - path: /etc/toolpain/scan.env
@@ -19,15 +19,72 @@ write_files:
       REF={{REF}}
       TOKEN={{TOKEN}}
       CONTROL_PLANE_URL={{CONTROL_PLANE_URL}}
+      LLM_MODE={{LLM_MODE}}
       PREFER_SUBDIR={{PREFER_SUBDIR}}
       SCAN_BRIEF_B64={{SCAN_BRIEF_B64}}
+      TOOLPAIN_MAX_PROFILES={{TOOLPAIN_MAX_PROFILES}}
       RUNTIME=runc
+  - path: /usr/local/bin/toolpain-ping.py
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env python3
+      """JSON-safe provision event post to the control plane."""
+      import json
+      import os
+      import sys
+      import urllib.request
+
+      def main() -> int:
+          # Belt-and-suspenders: load scan.env if the parent forgot to export.
+          env_path = "/etc/toolpain/scan.env"
+          if os.path.isfile(env_path):
+              with open(env_path, encoding="utf-8") as fh:
+                  for line in fh:
+                      line = line.strip()
+                      if not line or line.startswith("#") or "=" not in line:
+                          continue
+                      key, _, val = line.partition("=")
+                      os.environ.setdefault(key.strip(), val.strip())
+          msg = (sys.argv[1] if len(sys.argv) > 1 else "")[:500]
+          level = sys.argv[2] if len(sys.argv) > 2 else "info"
+          code = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
+          body = {"stage": "provision", "level": level, "msg": msg, "data": {}}
+          if code:
+              body["data"] = {"code": code, "error": code}
+          url = (
+              os.environ["CONTROL_PLANE_URL"].rstrip("/")
+              + "/internal/scans/"
+              + os.environ["SCAN_ID"]
+              + "/events"
+          )
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(body).encode(),
+              headers={
+                  "Content-Type": "application/json",
+                  "X-Scan-Token": os.environ["TOKEN"],
+              },
+              method="POST",
+          )
+          try:
+              urllib.request.urlopen(req, timeout=15).read()
+          except Exception:
+              return 1
+          return 0
+
+      if __name__ == "__main__":
+          raise SystemExit(main())
   - path: /usr/local/bin/toolpain-run.sh
     permissions: "0755"
     content: |
       #!/bin/bash
       set -euo pipefail
+      # set -a so KEY=value from scan.env is exported to ping.py / children.
+      # Without this, curl works (shell vars) but toolpain-ping.py sees an empty
+      # environ and every progress event is silently dropped.
+      set -a
       source /etc/toolpain/scan.env
+      set +a
       cd /opt/toolpain
       EXTRA=()
       if [ -n "${PREFER_SUBDIR:-}" ]; then
@@ -39,19 +96,91 @@ write_files:
           EXTRA+=(--scan-brief "$BRIEF")
         fi
       fi
-      curl -fsS -X POST \
-        -H "X-Scan-Token: $TOKEN" \
-        -H "Content-Type: application/json" \
-        -d '{"stage":"provision","level":"info","msg":"Scanner VM runner starting"}' \
-        "$CONTROL_PLANE_URL/internal/scans/$SCAN_ID/events" || true
-      python3 -m runner.main \
+      # Prefer CP proxy (never FixtureLlm) on Vultr scanners. Env is enough for
+      # older snapshots that lack --llm-mode; export before runner.main.
+      LLM_MODE="${LLM_MODE:-live}"
+      case "$LLM_MODE" in
+        fixture|off) LLM_MODE=live ;;
+      esac
+      # Live scans: LLM artifacts only (heuristic templates are FixtureLlm/dev).
+      CODEGEN_MODE=llm
+      export LLM_MODE CODEGEN_MODE
+      ping() {
+        /usr/local/bin/toolpain-ping.py "$1" "${2:-info}" "${3:-}" || true
+      }
+      fail_bootstrap() {
+        ping "$1" "warn" "provision_failed"
+        touch /tmp/toolpain-done
+        exit 1
+      }
+      ping "Scanner VM runner starting (LLM_MODE=$LLM_MODE)"
+      PYTHON=python3
+      if [ -x /opt/toolpain/.venv/bin/python ]; then
+        PYTHON=/opt/toolpain/.venv/bin/python
+      fi
+      ping "Using $($PYTHON -c 'import sys; print(sys.executable)')"
+      # Hot-sync runner/ + sandbox/ from CP so scanners pick up fixes without a rebake.
+      if curl -fsS -H "X-Scan-Token: $TOKEN" \
+        "$CONTROL_PLANE_URL/internal/scans/$SCAN_ID/runner-sync.tgz" \
+        -o /tmp/runner-sync.tgz; then
+        tar -xzf /tmp/runner-sync.tgz -C /opt/toolpain
+        ping "Synced runner+sandbox packages from control plane"
+      else
+        ping "Runner sync skipped; using snapshot copy"
+      fi
+      # Same install recipe as local (infra/install_toolpain.sh). Rebuild if import fails.
+      # Cap repair time — a silent pip hang must not burn the whole scan budget.
+      REPAIR_TIMEOUT_SEC="${TOOLPAIN_REPAIR_TIMEOUT_SEC:-240}"
+      if ! "$PYTHON" -c 'import runner.main' >/tmp/toolpain-import.err 2>&1; then
+        IMPORT_ERR=$(tr '\n' ' ' </tmp/toolpain-import.err | head -c 240)
+        ping "Repairing toolpain install (runner import failed): ${IMPORT_ERR:-unknown}"
+        ping "Install repair started (timeout ${REPAIR_TIMEOUT_SEC}s)"
+        set +e
+        if [ -x /opt/toolpain/infra/install_toolpain.sh ]; then
+          timeout "$REPAIR_TIMEOUT_SEC" env TOOLPAIN_INSTALL_DEV=0 \
+            bash /opt/toolpain/infra/install_toolpain.sh /opt/toolpain \
+            >/tmp/toolpain-pip.log 2>&1
+          REPAIR_RC=$?
+        else
+          timeout "$REPAIR_TIMEOUT_SEC" bash -c '
+            rm -rf /opt/toolpain/.venv
+            python3 -m venv /opt/toolpain/.venv
+            /opt/toolpain/.venv/bin/pip install -U pip
+            /opt/toolpain/.venv/bin/pip install -e /opt/toolpain
+          ' >/tmp/toolpain-pip.log 2>&1
+          REPAIR_RC=$?
+        fi
+        set -e
+        if [ "$REPAIR_RC" -eq 124 ]; then
+          TAIL=$(tr '\n' ' ' </tmp/toolpain-pip.log | tail -c 200)
+          fail_bootstrap "Install repair timed out after ${REPAIR_TIMEOUT_SEC}s: ${TAIL:-no log}"
+        elif [ "$REPAIR_RC" -ne 0 ]; then
+          TAIL=$(tr '\n' ' ' </tmp/toolpain-pip.log | tail -c 200)
+          fail_bootstrap "Install repair failed (rc=$REPAIR_RC): ${TAIL:-no log}"
+        fi
+        PYTHON=/opt/toolpain/.venv/bin/python
+        if ! "$PYTHON" -c 'import runner.main' >/tmp/toolpain-import.err 2>&1; then
+          IMPORT_ERR=$(tr '\n' ' ' </tmp/toolpain-import.err | head -c 240)
+          fail_bootstrap "runner import still failing after repair: ${IMPORT_ERR:-unknown}"
+        fi
+        ping "Install repair finished; runner import ok"
+      fi
+      set +e
+      "$PYTHON" -m runner.main \
         --scan-id "$SCAN_ID" \
         --repo-url "$REPO_URL" \
         --ref "$REF" \
         --token "$TOKEN" \
         --control-plane-url "$CONTROL_PLANE_URL" \
-        "${EXTRA[@]}"
+        "${EXTRA[@]}" >/tmp/toolpain-runner.out 2>/tmp/toolpain-runner.err
+      RC=$?
+      set -e
+      if [ "$RC" -ne 0 ]; then
+        DETAIL=$(tr '\n' ' ' </tmp/toolpain-runner.err | head -c 240)
+        ping "Runner exited with code $RC: ${DETAIL:-no stderr}" "warn"
+      fi
       touch /tmp/toolpain-done
+      exit "$RC"
 
 runcmd:
   - systemctl enable --now docker
@@ -60,5 +189,26 @@ runcmd:
       if [ ! -f /opt/toolpain/pyproject.toml ]; then
         git clone --depth 1 https://github.com/lupong/toolpain.git /opt/toolpain || true
       fi
-  - pip3 install -e /opt/toolpain || true
+  - |
+      # Same recipe as local make install / snapshot bake.
+      if [ -f /opt/toolpain/pyproject.toml ]; then
+        if [ ! -x /opt/toolpain/.venv/bin/python ] \
+          || ! /opt/toolpain/.venv/bin/python -c 'import runner.main' 2>/dev/null; then
+          if [ -x /opt/toolpain/infra/install_toolpain.sh ]; then
+            TOOLPAIN_INSTALL_DEV=0 bash /opt/toolpain/infra/install_toolpain.sh /opt/toolpain || true
+          else
+            rm -rf /opt/toolpain/.venv
+            python3 -m venv /opt/toolpain/.venv
+            /opt/toolpain/.venv/bin/pip install -U pip
+            /opt/toolpain/.venv/bin/pip install -e /opt/toolpain || true
+          fi
+        fi
+      fi
   - /usr/local/bin/toolpain-run.sh || true
+  - |
+      # Apply host firewall only after the scan attempt so live debugging stays possible.
+      if [ -f /opt/toolpain/infra/nftables.conf ]; then
+        cp /opt/toolpain/infra/nftables.conf /etc/nftables.conf
+        systemctl enable nftables || true
+        nft -f /etc/nftables.conf || true
+      fi

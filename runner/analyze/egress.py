@@ -9,7 +9,42 @@ from pydantic import BaseModel, Field
 from runner.probe import FIXTURE_HOSTS, ProbeResult
 
 _URL_RE = re.compile(r"https?://([A-Za-z0-9.\-]+)")
-DOC_HOST_IGNORE = {"localhost", "127.0.0.1", "github.com", "npmjs.com", "pypi.org", "example.com"}
+_MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_HTML_IMG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+DOC_HOST_IGNORE = {
+    "localhost",
+    "127.0.0.1",
+    "github.com",
+    "docs.github.com",
+    "npmjs.com",
+    "pypi.org",
+    "example.com",
+    "img.shields.io",
+    "shields.io",
+    "badge.fury.io",
+    "goreportcard.com",
+    "camo.githubusercontent.com",
+    "raw.githubusercontent.com",
+    "user-images.githubusercontent.com",
+    "avatars.githubusercontent.com",
+    "modelcontextprotocol.io",
+    # Install / editor / marketplace links, not runtime egress the server claims.
+    "code.visualstudio.com",
+    "insiders.vscode.dev",
+    "vscode.dev",
+    "marketplace.visualstudio.com",
+    "www.docker.com",
+    "docker.com",
+    "hub.docker.com",
+    # README placeholders for GitHub Enterprise examples.
+    "octocorp.ghe.com",
+    "copilot-api.octocorp.ghe.com",
+    "yoursubdomain.ghe.com",
+}
+_PLACEHOLDER_HOST = re.compile(
+    r"(^|\.)example\.com$|^your[a-z]*\.|^example\.|^placeholder\.|^\*",
+    re.I,
+)
 
 
 class EgressAttempt(BaseModel):
@@ -30,10 +65,35 @@ class EgressAnalysis(BaseModel):
         return [a for a in self.attempted if not a.declared]
 
 
+# Product words in docs imply their public API host even when only github.com links appear.
+_IMPLIED_API_HOSTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (re.compile(r"\bGitHub\b"), ("api.github.com",)),
+    (re.compile(r"\bGitLab\b"), ("gitlab.com", "api.gitlab.com")),
+)
+
+
 def declared_hosts(readme_text: str | None) -> list[str]:
-    """Hosts the docs openly say the server talks to (excluding repo/package hosts)."""
-    hosts = [h.lower() for h in _URL_RE.findall(readme_text or "")]
-    return sorted({h for h in hosts if h not in DOC_HOST_IGNORE})
+    """Hosts the docs openly say the server talks to (excluding badges and package hosts)."""
+    text = _MD_IMAGE_RE.sub("", readme_text or "")
+    text = _HTML_IMG_RE.sub("", text)
+    hosts = {
+        h.lower()
+        for h in _URL_RE.findall(text)
+        if h.lower() not in DOC_HOST_IGNORE and not _PLACEHOLDER_HOST.search(h)
+    }
+    for pattern, implied in _IMPLIED_API_HOSTS:
+        if pattern.search(text):
+            hosts.update(implied)
+    return sorted(hosts)
+
+
+def host_is_declared(host: str, declared: list[str]) -> bool:
+    """Exact match, or observed host is a subdomain of a declared parent."""
+    h = host.lower().rstrip(".")
+    declared_l = [d.lower().rstrip(".") for d in declared]
+    if h in declared_l:
+        return True
+    return any(h.endswith("." + d) for d in declared_l)
 
 
 def _port_for(probe: ProbeResult, host: str) -> int | None:
@@ -59,7 +119,7 @@ def analyze_egress(
                     tool=name,
                     blocked=True,  # the sandbox has no route out: every attempt is contained
                     port=_port_for(probe, host),
-                    declared=host in declared,
+                    declared=host_is_declared(host, declared),
                 )
             )
         ingress += [{"port": p, "proto": "tcp", "tool": name} for p in probe.listening_ports]

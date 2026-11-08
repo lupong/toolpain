@@ -9,19 +9,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from control_plane.main import AppState, app
-from control_plane.provisioner.fake import FakeProvisioner
+from control_plane.provisioner.demo import DemoProvisioner
 
 
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
     # Rebuild app state against temp DB
     import control_plane.main as main_mod
 
     state = AppState()
-    state.provisioner = FakeProvisioner(
+    state.provisioner = DemoProvisioner(
         emit_event=state.emit_event,
         save_report=state.save_report,
         update_scan=state.update_scan,
@@ -63,7 +63,7 @@ def test_create_scan_sse_report(client: TestClient) -> None:
     assert body["status"] == "queued"
     assert body["account_mode"] == "toolpain"
 
-    # Poll until report ready (fake provisioner is fast)
+    # Poll until report ready (demo provisioner is fast)
     report = None
     for _ in range(80):
         rr = client.get(f"/api/scans/{scan_id}/report")
@@ -112,7 +112,7 @@ def test_demo_reports_match_their_story() -> None:
 
 
 def test_demo_probe_events_match_the_story() -> None:
-    from control_plane.provisioner.fake import _beats
+    from control_plane.provisioner.demo import _beats
     from control_plane.sample_report import sample_report
 
     expected = {
@@ -176,8 +176,12 @@ def test_internal_event_with_token(client: TestClient) -> None:
 
     r = client.post(
         "/api/scans",
-        json={"repo_url": "https://github.com/modelcontextprotocol/servers"},
+        json={
+            "repo_url": "https://github.com/modelcontextprotocol/servers",
+            "prefer_subdir": "src/filesystem",
+        },
     )
+    assert r.status_code == 201, r.text
     scan_id = r.json()["id"]
     token = main_mod.STATE.db.get_token(scan_id)
     assert token

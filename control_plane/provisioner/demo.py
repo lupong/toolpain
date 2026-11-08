@@ -1,4 +1,4 @@
-"""FakeProvisioner: replays a paced demo and the report for that demo.
+"""DemoProvisioner: replays a paced demo and the report for that demo.
 
 Default pacing is about 35–40 seconds so the containment story can be read.
 Tests pass ``delay_sec`` to sleep a fixed short interval per beat instead.
@@ -17,7 +17,7 @@ from control_plane.sample_report import report_for_demo
 Beat = tuple[str, str, str, dict[str, Any], float]
 
 
-class FakeProvisioner(Provisioner):
+class DemoProvisioner(Provisioner):
     def __init__(
         self,
         emit_event: Callable[..., Any] | None = None,

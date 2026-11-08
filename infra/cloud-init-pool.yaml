@@ -1,0 +1,335 @@
+#cloud-config
+# Warm-pool scanner bootstrap (opt-in). Placeholders:
+#   {{CONTROL_PLANE_URL}} {{POOL_TOKEN}} {{LLM_MODE}}
+# Boots ToolPain, then runs toolpain-pool-agent (claims work from CP).
+# Keep every line under each content: | indented — nested heredocs break YAML.
+package_update: false
+packages: []
+
+write_files:
+  - path: /etc/toolpain/pool.env
+    permissions: "0600"
+    content: |
+      CONTROL_PLANE_URL={{CONTROL_PLANE_URL}}
+      POOL_TOKEN={{POOL_TOKEN}}
+      LLM_MODE={{LLM_MODE}}
+      TOOLPAIN_MAX_PROFILES={{TOOLPAIN_MAX_PROFILES}}
+      CODEGEN_MODE=llm
+  - path: /usr/local/bin/toolpain-ping.py
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env python3
+      import json
+      import os
+      import sys
+      import urllib.request
+
+      def main() -> int:
+          msg = (sys.argv[1] if len(sys.argv) > 1 else "")[:500]
+          level = sys.argv[2] if len(sys.argv) > 2 else "info"
+          code = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
+          scan_id = os.environ.get("SCAN_ID") or ""
+          token = os.environ.get("TOKEN") or ""
+          if not scan_id or not token:
+              return 0
+          body = {"stage": "provision", "level": level, "msg": msg, "data": {}}
+          if code:
+              body["data"] = {"code": code, "error": code}
+          url = (
+              os.environ["CONTROL_PLANE_URL"].rstrip("/")
+              + "/internal/scans/"
+              + scan_id
+              + "/events"
+          )
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(body).encode(),
+              headers={
+                  "Content-Type": "application/json",
+                  "X-Scan-Token": token,
+              },
+              method="POST",
+          )
+          try:
+              urllib.request.urlopen(req, timeout=15).read()
+          except Exception:
+              return 1
+          return 0
+
+      if __name__ == "__main__":
+          raise SystemExit(main())
+  - path: /usr/local/bin/toolpain-run.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      source /etc/toolpain/scan.env
+      cd /opt/toolpain
+      EXTRA=()
+      if [ -n "${PREFER_SUBDIR:-}" ]; then
+        EXTRA+=(--prefer-subdir "$PREFER_SUBDIR")
+      fi
+      if [ -n "${SCAN_BRIEF_B64:-}" ]; then
+        BRIEF=$(printf '%s' "$SCAN_BRIEF_B64" | base64 -d 2>/dev/null || true)
+        if [ -n "$BRIEF" ]; then
+          EXTRA+=(--scan-brief "$BRIEF")
+        fi
+      fi
+      LLM_MODE="${LLM_MODE:-live}"
+      case "$LLM_MODE" in
+        fixture|off) LLM_MODE=live ;;
+      esac
+      CODEGEN_MODE=llm
+      export LLM_MODE CODEGEN_MODE
+      ping() {
+        /usr/local/bin/toolpain-ping.py "$1" "${2:-info}" "${3:-}" || true
+      }
+      fail_bootstrap() {
+        ping "$1" "warn" "provision_failed"
+        touch /tmp/toolpain-done
+        exit 1
+      }
+      ping "Scanner VM runner starting (LLM_MODE=$LLM_MODE pool=1)"
+      PYTHON=python3
+      if [ -x /opt/toolpain/.venv/bin/python ]; then
+        PYTHON=/opt/toolpain/.venv/bin/python
+      fi
+      if curl -fsS -H "X-Scan-Token: $TOKEN" \
+        "$CONTROL_PLANE_URL/internal/scans/$SCAN_ID/runner-sync.tgz" \
+        -o /tmp/runner-sync.tgz; then
+        tar -xzf /tmp/runner-sync.tgz -C /opt/toolpain
+        ping "Synced runner+sandbox packages from control plane"
+      else
+        ping "Runner sync skipped; using snapshot copy"
+      fi
+      REPAIR_TIMEOUT_SEC="${TOOLPAIN_REPAIR_TIMEOUT_SEC:-240}"
+      if ! "$PYTHON" -c 'import runner.main' >/tmp/toolpain-import.err 2>&1; then
+        IMPORT_ERR=$(tr '\n' ' ' </tmp/toolpain-import.err | head -c 240)
+        ping "Repairing toolpain install (runner import failed): ${IMPORT_ERR:-unknown}"
+        set +e
+        if [ -x /opt/toolpain/infra/install_toolpain.sh ]; then
+          timeout "$REPAIR_TIMEOUT_SEC" env TOOLPAIN_INSTALL_DEV=0 \
+            bash /opt/toolpain/infra/install_toolpain.sh /opt/toolpain \
+            >/tmp/toolpain-pip.log 2>&1
+          REPAIR_RC=$?
+        else
+          timeout "$REPAIR_TIMEOUT_SEC" bash -c '
+            rm -rf /opt/toolpain/.venv
+            python3 -m venv /opt/toolpain/.venv
+            /opt/toolpain/.venv/bin/pip install -U pip
+            /opt/toolpain/.venv/bin/pip install -e /opt/toolpain
+          ' >/tmp/toolpain-pip.log 2>&1
+          REPAIR_RC=$?
+        fi
+        set -e
+        if [ "$REPAIR_RC" -ne 0 ]; then
+          TAIL=$(tr '\n' ' ' </tmp/toolpain-pip.log | tail -c 200)
+          fail_bootstrap "Install repair failed (rc=$REPAIR_RC): ${TAIL:-no log}"
+        fi
+        PYTHON=/opt/toolpain/.venv/bin/python
+      fi
+      set +e
+      "$PYTHON" -m runner.main \
+        --scan-id "$SCAN_ID" \
+        --repo-url "$REPO_URL" \
+        --ref "$REF" \
+        --token "$TOKEN" \
+        --control-plane-url "$CONTROL_PLANE_URL" \
+        "${EXTRA[@]}" >/tmp/toolpain-runner.out 2>/tmp/toolpain-runner.err
+      RC=$?
+      set -e
+      if [ "$RC" -ne 0 ]; then
+        DETAIL=$(tr '\n' ' ' </tmp/toolpain-runner.err | head -c 240)
+        ping "Runner exited with code $RC: ${DETAIL:-no stderr}" "warn"
+      fi
+      touch /tmp/toolpain-done
+      exit "$RC"
+  - path: /usr/local/bin/toolpain-pool-agent.py
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env python3
+      """Warm-pool agent: heartbeat → claim → run → scrub → idle."""
+      import json
+      import os
+      import subprocess
+      import time
+      import urllib.error
+      import urllib.request
+      from pathlib import Path
+
+      def _env() -> dict[str, str]:
+          path = Path("/etc/toolpain/pool.env")
+          out: dict[str, str] = {}
+          if path.is_file():
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  line = line.strip()
+                  if not line or line.startswith("#") or "=" not in line:
+                      continue
+                  k, _, v = line.partition("=")
+                  out[k.strip()] = v.strip()
+          out.update({k: v for k, v in os.environ.items() if k in out or k.startswith("VULTR_")})
+          return out
+
+      def _instance_id() -> str:
+          for path in (
+              "/etc/vultr/instance.json",
+              "/var/lib/cloud/instance/instance-id",
+          ):
+              p = Path(path)
+              if not p.exists():
+                  continue
+              try:
+                  if path.endswith(".json"):
+                      data = json.loads(p.read_text(encoding="utf-8"))
+                      for key in ("instanceid", "instance_id", "id"):
+                          if data.get(key):
+                              return str(data[key])
+                  else:
+                      return p.read_text(encoding="utf-8").strip()
+              except Exception:
+                  pass
+          # Vultr metadata
+          try:
+              req = urllib.request.Request(
+                  "http://169.254.169.254/v1.json",
+                  headers={"Metadata-Token": "vultr"},
+              )
+              with urllib.request.urlopen(req, timeout=3) as resp:
+                  data = json.loads(resp.read().decode())
+                  return str(data.get("instanceid") or data.get("instance-id") or "")
+          except Exception:
+              pass
+          return os.environ.get("VULTR_INSTANCE_ID") or ""
+
+      def _post(url: str, body: dict, headers: dict) -> dict:
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(body).encode(),
+              headers={**headers, "Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              return json.loads(resp.read().decode() or "{}")
+
+      def _scrub() -> None:
+          subprocess.run(
+              ["bash", "-lc", "docker rm -f $(docker ps -aq) 2>/dev/null || true"],
+              check=False,
+          )
+          subprocess.run(
+              ["bash", "-lc", "docker network prune -f 2>/dev/null || true"],
+              check=False,
+          )
+          for path in (
+              "/tmp/toolpain-done",
+              "/tmp/toolpain-runner.out",
+              "/tmp/toolpain-runner.err",
+              "/tmp/runner-sync.tgz",
+              "/etc/toolpain/scan.env",
+          ):
+              try:
+                  Path(path).unlink(missing_ok=True)
+              except Exception:
+                  pass
+
+      def main() -> int:
+          cfg = _env()
+          cp = (cfg.get("CONTROL_PLANE_URL") or "").rstrip("/")
+          token = cfg.get("POOL_TOKEN") or ""
+          if not cp or not token:
+              print("pool agent missing CONTROL_PLANE_URL or POOL_TOKEN", flush=True)
+              return 1
+          iid = _instance_id()
+          if not iid:
+              print("pool agent could not resolve instance id", flush=True)
+              time.sleep(30)
+              return 1
+          url = cp + "/internal/pool/heartbeat"
+          headers = {"X-Pool-Token": token}
+          status = "idle"
+          while True:
+              try:
+                  resp = _post(
+                      url,
+                      {"instance_id": iid, "status": status},
+                      headers,
+                  )
+              except Exception as exc:
+                  print(f"heartbeat failed: {exc}", flush=True)
+                  time.sleep(10)
+                  continue
+              assignment = resp.get("assignment") if isinstance(resp, dict) else None
+              if not assignment:
+                  status = "idle"
+                  time.sleep(5)
+                  continue
+              # Write scan env and run.
+              env_path = Path("/etc/toolpain/scan.env")
+              env_path.parent.mkdir(parents=True, exist_ok=True)
+              lines = [
+                  f"SCAN_ID={assignment['scan_id']}",
+                  f"REPO_URL={assignment['repo_url']}",
+                  f"REF={assignment.get('ref') or 'main'}",
+                  f"TOKEN={assignment['token']}",
+                  f"CONTROL_PLANE_URL={assignment.get('control_plane_url') or cp}",
+                  f"LLM_MODE={assignment.get('llm_mode') or cfg.get('LLM_MODE') or 'live'}",
+                  f"PREFER_SUBDIR={assignment.get('prefer_subdir') or ''}",
+                  f"SCAN_BRIEF_B64={assignment.get('scan_brief_b64') or ''}",
+                  f"TOOLPAIN_MAX_PROFILES={assignment.get('max_profiles') or cfg.get('TOOLPAIN_MAX_PROFILES') or ''}",
+                  "RUNTIME=runc",
+              ]
+              env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+              os.environ.update(
+                  {
+                      "SCAN_ID": assignment["scan_id"],
+                      "TOKEN": assignment["token"],
+                      "CONTROL_PLANE_URL": assignment.get("control_plane_url") or cp,
+                  }
+              )
+              status = "busy"
+              _post(url, {"instance_id": iid, "status": "busy"}, headers)
+              Path("/tmp/toolpain-done").unlink(missing_ok=True)
+              subprocess.run(["/usr/local/bin/toolpain-run.sh"], check=False)
+              _scrub()
+              status = "idle"
+              time.sleep(2)
+          return 0
+
+      if __name__ == "__main__":
+          raise SystemExit(main())
+  - path: /etc/systemd/system/toolpain-pool-agent.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ToolPain warm-pool agent
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      EnvironmentFile=-/etc/toolpain/pool.env
+      ExecStart=/usr/bin/python3 /usr/local/bin/toolpain-pool-agent.py
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl enable --now docker
+  - mkdir -p /opt/toolpain /etc/toolpain
+  - |
+      if [ ! -f /opt/toolpain/pyproject.toml ]; then
+        git clone --depth 1 https://github.com/lupong/toolpain.git /opt/toolpain || true
+      fi
+  - |
+      if [ -f /opt/toolpain/pyproject.toml ]; then
+        if [ ! -x /opt/toolpain/.venv/bin/python ] \
+          || ! /opt/toolpain/.venv/bin/python -c 'import runner.main' 2>/dev/null; then
+          if [ -x /opt/toolpain/infra/install_toolpain.sh ]; then
+            TOOLPAIN_INSTALL_DEV=0 bash /opt/toolpain/infra/install_toolpain.sh /opt/toolpain || true
+          fi
+        fi
+      fi
+  - systemctl daemon-reload
+  - systemctl enable --now toolpain-pool-agent.service

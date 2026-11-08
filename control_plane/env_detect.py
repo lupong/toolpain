@@ -13,7 +13,7 @@ class EnvInfo:
     docker: bool
     runsc: bool
     runtime: str  # runsc | runc | none
-    mode: str  # full | runc | fake_sandbox
+    mode: str  # full | runc | demo_sandbox
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -58,7 +58,7 @@ def detect() -> EnvInfo:
         return EnvInfo(docker=True, runsc=True, runtime="runsc", mode="full")
     if docker:
         return EnvInfo(docker=True, runsc=False, runtime="runc", mode="runc")
-    return EnvInfo(docker=False, runsc=False, runtime="none", mode="fake_sandbox")
+    return EnvInfo(docker=False, runsc=False, runtime="none", mode="demo_sandbox")
 
 
 if __name__ == "__main__":

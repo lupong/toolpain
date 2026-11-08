@@ -65,10 +65,10 @@
   /* ---------------- Sample report (Part 1.7 shape) ---------------- */
   var SAMPLE_REPORT = {
     scan_id: 's_8f2c',
-    repo: { url: 'https://github.com/andrew/playwright-mcp', commit: 'a1b2c3d', upstream: 'microsoft/playwright-mcp',
+    repo: { url: 'https://github.com/microsoft/playwright-mcp', commit: 'a1b2c3d', upstream: null,
       fork_drift: [{ change: 'added_tool', tool: 'fetch_report', file: 'src/tools/report.ts' }] },
     verdict: 'flagged',
-    stats: { tools: 27, undocumented: 1, critical_tier: 3, toxic_combos: 4, egress_attempted: 2, decoy_reads: 1 },
+    stats: { tools: 6, undocumented: 1, critical_tier: 2, toxic_combos: 4, egress_attempted: 2, decoy_reads: 1 },
     tools: [
       { name: 'browser_navigate', privilege: 'high', verdict: 'confirmed', sources: ['D', 'S', 'R'], egress: ['fixture.local'], decoy_reads: 0 },
       { name: 'browser_evaluate', privilege: 'critical', verdict: 'confirmed', sources: ['D', 'S', 'R'], egress: [], decoy_reads: 0 },
@@ -146,7 +146,42 @@
   if (intake) {
     var repo = $('#repo'), wrap = $('#repo-wrap'), chip = $('#repo-chip'), err = $('#repo-error');
     var toggle = $('#byo-toggle'), panel = $('#byo-panel'), ack = $('#byo-ack'), btn = $('#scan-btn'), mode = $('#account-mode');
+    var poolToggle = $('#pool-toggle');
+    var poolToggleHelp = $('#pool-toggle-help');
+    var monoPanel = $('#monorepo-panel'), monoMsg = $('#monorepo-msg'), packagePick = $('#package-pick');
+    var preferSub = $('#prefer-subdir');
+    var inspectStatus = $('#repo-inspect-status');
+    var inspectStatusText = $('#repo-inspect-status-text');
     var RE = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/;
+    var inspectTimer = null;
+    var lastInspectKey = '';
+    var monorepoRequired = false;
+    var inspectInFlight = false;
+
+    var setInspectStatus = function (state, text) {
+      if (!inspectStatus || !inspectStatusText) return;
+      inspectStatus.classList.remove(
+        'tp-inspect-status--checking',
+        'tp-inspect-status--ready',
+        'tp-inspect-status--multi',
+        'tp-inspect-status--error'
+      );
+      if (!state) {
+        inspectStatus.hidden = true;
+        return;
+      }
+      inspectStatus.hidden = false;
+      inspectStatus.classList.add('tp-inspect-status--' + state);
+      var iconUse = inspectStatus.querySelector('use');
+      if (iconUse) {
+        var href = state === 'checking' ? '#i-spin'
+          : state === 'ready' ? '#i-check'
+          : state === 'multi' ? '#i-warn'
+          : '#i-dash';
+        iconUse.setAttribute('href', href);
+      }
+      inspectStatusText.textContent = text || '';
+    };
 
     var validate = function (showError) {
       var m = RE.exec(repo.value.trim());
@@ -158,21 +193,146 @@
       err.hidden = !!m || !showError;
       return m;
     };
-    var syncByo = function () {
+    var syncPreferFromPick = function () {
+      if (!packagePick || !preferSub) return;
+      var v = (packagePick.value || '').replace(/^\/+|\/+$/g, '');
+      if (v) preferSub.value = v;
+    };
+    var applyMonorepo = function (body) {
+      monorepoRequired = !!(body && body.multi && body.candidates && body.candidates.length > 1);
+      if (!monoPanel) { syncSubmitEnabled(); return; }
+      if (!monorepoRequired) {
+        monoPanel.hidden = true;
+        if (packagePick) {
+          packagePick.innerHTML = '<option value="">Select one MCP server…</option>';
+          packagePick.value = '';
+        }
+        if (preferSub) preferSub.value = '';
+        var n = body && typeof body.count === 'number' ? body.count : 0;
+        if (n === 1) {
+          setInspectStatus('ready', 'Found 1 MCP server path — ready to scan.');
+        } else {
+          setInspectStatus('ready', 'No multi-server layout detected — ready to scan.');
+        }
+        syncSubmitEnabled();
+        return;
+      }
+      setInspectStatus(
+        'multi',
+        'Found ' + body.count + ' MCP servers — pick one below.'
+      );
+      monoPanel.hidden = false;
+      if (monoMsg) {
+        monoMsg.textContent = (body && body.message) ||
+          ('This repository contains ' + body.count +
+            ' MCP servers. Pick one to scan.');
+      }
+      if (packagePick) {
+        var prev = packagePick.value || '';
+        packagePick.innerHTML = '<option value="">Select one MCP server…</option>';
+        body.candidates.forEach(function (c) {
+          var opt = document.createElement('option');
+          opt.value = c;
+          opt.textContent = c;
+          packagePick.appendChild(opt);
+        });
+        if (prev && body.candidates.indexOf(prev) >= 0) {
+          packagePick.value = prev;
+          syncPreferFromPick();
+        } else {
+          packagePick.value = '';
+          if (preferSub) preferSub.value = '';
+        }
+      }
+      syncSubmitEnabled();
+    };
+    var clearMonorepo = function (opts) {
+      monorepoRequired = false;
+      if (monoPanel) monoPanel.hidden = true;
+      if (packagePick) {
+        packagePick.innerHTML = '<option value="">Select one MCP server…</option>';
+        packagePick.value = '';
+      }
+      if (preferSub) preferSub.value = '';
+      if (!(opts && opts.keepStatus)) setInspectStatus(null);
+      syncSubmitEnabled();
+    };
+    var syncSubmitEnabled = function () {
       var on = toggle.getAttribute('aria-pressed') === 'true';
       panel.hidden = !on;
       mode.textContent = on ? 'your account' : 'toolpain account';
-      var blocked = on && !ack.checked;
+      var byoBlocked = on && !ack.checked;
+      var monoBlocked = monorepoRequired && !(packagePick && packagePick.value);
+      var checkingBlocked = inspectInFlight;
+      var blocked = byoBlocked || monoBlocked || checkingBlocked;
       btn.disabled = blocked;
-      btn.firstChild.textContent = blocked ? 'Confirm the key warning to scan ' : 'Scan it ';
+      if (byoBlocked) {
+        btn.firstChild.textContent = 'Confirm the key warning to scan ';
+      } else if (checkingBlocked) {
+        btn.firstChild.textContent = 'Checking repo… ';
+      } else if (monoBlocked) {
+        btn.firstChild.textContent = 'Pick a server to scan ';
+      } else {
+        btn.firstChild.textContent = 'Scan it ';
+      }
     };
+    var syncByo = syncSubmitEnabled;
     var estimateEl = $('#cost-estimate');
+    var poolStatusEl = $('#pool-status');
+    var scannerModeText = $('#scanner-mode-text');
+    var poolMode = { enabled: false, ready: 0, provisioner: 'vultr' };
     var estimateTimer = null;
+    function poolRequested() {
+      return !!(poolToggle && poolToggle.getAttribute('aria-pressed') === 'true');
+    }
+    function syncScannerModeText() {
+      if (!scannerModeText) return;
+      if (poolRequested()) {
+        if (!poolMode.enabled) {
+          scannerModeText.textContent = 'Warm pool requested, but the control plane is not keeping warm scanners (SCANNER_POOL_ENABLED off) — this scan will create a VM.';
+        } else if (poolMode.ready) {
+          scannerModeText.textContent = 'Warm pool — this scan will claim a ready scanner (' + poolMode.ready + ' idle).';
+        } else {
+          scannerModeText.textContent = 'Warm pool requested — none idle yet; may fall back to create-on-demand.';
+        }
+      } else {
+        scannerModeText.textContent = poolMode.provisioner === 'vultr'
+          ? 'New Vultr VM per scan (warm pool opt-in is off).'
+          : 'Local / demo provisioner.';
+      }
+    }
+    function refreshPoolStatus(h) {
+      var pool = (h && h.scanner_pool) || {};
+      poolMode.enabled = !!pool.enabled;
+      poolMode.ready = pool.ready || 0;
+      poolMode.provisioner = (h && h.provisioner) || poolMode.provisioner;
+      if (poolToggle) {
+        poolToggle.disabled = poolMode.provisioner !== 'vultr';
+        if (poolToggle.disabled) poolToggle.setAttribute('aria-pressed', 'false');
+      }
+      if (poolToggleHelp) {
+        poolToggleHelp.textContent = poolMode.enabled
+          ? ('Off by default. Pool has ' + (pool.ready || 0) + ' ready / ' + (pool.size || 0) + ' size. Turn on to claim instead of create.')
+          : 'Off by default. Control plane is not maintaining warm scanners (ops: SCANNER_POOL_ENABLED).';
+      }
+      if (poolStatusEl) {
+        if (poolMode.enabled) {
+          poolStatusEl.hidden = false;
+          poolStatusEl.textContent = 'Pool capacity: ' + (pool.ready || 0) + ' ready · '
+            + (pool.busy || 0) + ' busy · ' + (pool.pending || 0) + ' pending';
+        } else {
+          poolStatusEl.hidden = true;
+          poolStatusEl.textContent = '';
+        }
+      }
+      syncScannerModeText();
+    }
     function refreshEstimate() {
       if (!estimateEl) return;
       var m = RE.exec(repo.value.trim());
       if (!m) { estimateEl.textContent = ''; return; }
-      var provisioner = toggle.getAttribute('aria-pressed') === 'true' ? 'vultr' : 'local';
+      var provisioner = (poolMode.provisioner === 'vultr' || toggle.getAttribute('aria-pressed') === 'true')
+        ? 'vultr' : 'local';
       fetch('/api/estimate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -182,25 +342,106 @@
           estimateEl.textContent = 'Estimate unavailable';
           return;
         }
-        estimateEl.textContent = 'Estimate ' + money(body.total_usd) + ' before this scan. The report will show the actual.';
+        var suffix = (poolRequested() && poolMode.enabled && poolMode.ready)
+          ? ' Warm pool claim selected — skips create/boot when idle.'
+          : '';
+        estimateEl.textContent = 'Estimate ' + money(body.total_usd) + ' before this scan. The report will show the actual.' + suffix;
       }).catch(function () { estimateEl.textContent = 'Estimate unavailable'; });
+    }
+    function refreshInspect() {
+      var m = RE.exec(repo.value.trim());
+      if (!m) { clearMonorepo(); lastInspectKey = ''; inspectInFlight = false; return; }
+      var refVal = (($('#ref') && $('#ref').value.trim()) || 'main');
+      var key = repo.value.trim().replace(/\/$/, '') + '@' + refVal;
+      if (key === lastInspectKey) return;
+      lastInspectKey = key;
+      var inspectKey = key;
+      inspectInFlight = true;
+      clearMonorepo({ keepStatus: true });
+      setInspectStatus('checking', 'Checking the repo for MCP servers…');
+      syncSubmitEnabled();
+      fetch('/api/intake/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_url: repo.value.trim().replace(/\/$/, ''), ref: refVal })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          // Ignore stale responses after the URL changed again.
+          if (inspectKey !== lastInspectKey) return;
+          inspectInFlight = false;
+          if (!res.ok) {
+            clearMonorepo();
+            setInspectStatus('error', 'Could not check this repo for MCP servers.');
+            return;
+          }
+          applyMonorepo(res.body);
+        })
+        .catch(function () {
+          if (inspectKey !== lastInspectKey) return;
+          inspectInFlight = false;
+          clearMonorepo();
+          setInspectStatus('error', 'Could not check this repo for MCP servers.');
+        });
     }
     repo.addEventListener('input', function () {
       validate(false);
+      // Reset picker immediately so a prior monorepo cannot block a new URL.
+      lastInspectKey = '';
+      inspectInFlight = false;
+      clearMonorepo();
       clearTimeout(estimateTimer);
       estimateTimer = setTimeout(refreshEstimate, 250);
+      clearTimeout(inspectTimer);
+      if (RE.exec(repo.value.trim())) {
+        setInspectStatus('checking', 'Waiting to check this repo for MCP servers…');
+        inspectTimer = setTimeout(refreshInspect, 400);
+      }
     });
-    repo.addEventListener('blur', function () { validate(repo.value.trim() !== ''); });
+    repo.addEventListener('blur', function () {
+      validate(repo.value.trim() !== '');
+      refreshInspect();
+    });
+    var refInput = $('#ref');
+    if (refInput) {
+      refInput.addEventListener('change', function () {
+        lastInspectKey = '';
+        clearMonorepo();
+        refreshInspect();
+      });
+    }
+    if (packagePick) {
+      packagePick.addEventListener('change', function () {
+        syncPreferFromPick();
+        syncSubmitEnabled();
+      });
+    }
     toggle.addEventListener('click', function () {
       toggle.setAttribute('aria-pressed', String(toggle.getAttribute('aria-pressed') !== 'true'));
       syncByo();
       refreshEstimate();
     });
+    if (poolToggle) {
+      poolToggle.addEventListener('click', function () {
+        if (poolToggle.disabled) return;
+        poolToggle.setAttribute(
+          'aria-pressed',
+          String(poolToggle.getAttribute('aria-pressed') !== 'true')
+        );
+        syncScannerModeText();
+        refreshEstimate();
+      });
+    }
     ack.addEventListener('change', syncByo);
     intake.addEventListener('submit', function (e) {
       e.preventDefault();
       var m = validate(true);
       if (!m) { repo.focus(); return; }
+      if (monorepoRequired && !(packagePick && packagePick.value)) {
+        if (monoPanel) monoPanel.hidden = false;
+        if (packagePick) packagePick.focus();
+        syncSubmitEnabled();
+        return;
+      }
       if (btn.disabled) return;
       var refEl = $('#ref');
       var briefEl = $('#scan-brief');
@@ -210,13 +451,20 @@
         protocol: ($('#protocol') && $('#protocol').value) || 'auto'
       };
       if (briefEl && briefEl.value.trim()) payload.scan_brief = briefEl.value.trim().slice(0, 2000);
+      var ticketEl = $('#ticket');
+      if (ticketEl && ticketEl.value.trim()) payload.ticket = ticketEl.value.trim();
+      syncPreferFromPick();
       var subEl = $('#prefer-subdir');
       if (subEl && subEl.value.trim()) payload.prefer_subdir = subEl.value.trim().replace(/^\/+|\/+$/g, '');
+      if (packagePick && packagePick.value) {
+        payload.prefer_subdir = packagePick.value.replace(/^\/+|\/+$/g, '');
+      }
       var mcpEl = $('#mcp-url');
       if (mcpEl && mcpEl.value.trim()) payload.mcp_url = mcpEl.value.trim();
       var byoOn = toggle.getAttribute('aria-pressed') === 'true';
       var vkey = $('#vkey');
       if (byoOn && vkey && vkey.value) payload.byo_vultr_key = vkey.value;
+      if (poolRequested()) payload.use_pool = true;
       btn.disabled = true;
       fetch('/api/scans', {
         method: 'POST',
@@ -226,9 +474,19 @@
         return r.json().then(function (j) {
           if (!r.ok) {
             var detail = j && j.detail;
-            var msg = detail && detail[0] && detail[0].msg ? detail[0].msg : (detail ? JSON.stringify(detail) : 'scan failed');
-            var ex = new Error(msg);
+            var ex = new Error('scan failed');
             ex.status = r.status;
+            ex.detail = detail;
+            if (detail && detail.code === 'monorepo_choice_required') {
+              ex.message = detail.message || 'Pick one MCP server to scan';
+              applyMonorepo(detail);
+            } else if (detail && detail[0] && detail[0].msg) {
+              ex.message = detail[0].msg;
+            } else if (typeof detail === 'string') {
+              ex.message = detail;
+            } else if (detail) {
+              ex.message = JSON.stringify(detail);
+            }
             throw ex;
           }
           return j;
@@ -236,11 +494,16 @@
       }).then(function (j) {
         location.href = 'scan.html?id=' + encodeURIComponent(j.id) + '&state=in-progress';
       }).catch(function (ex) {
+        btn.disabled = false;
+        syncSubmitEnabled();
+        if (ex.status === 422 && ex.detail && ex.detail.code === 'monorepo_choice_required') {
+          if (packagePick) packagePick.focus();
+          return;
+        }
         if (ex.status === 422) {
           location.href = 'scan.html?state=error&reason=invalid&url=' + encodeURIComponent(repo.value.trim());
           return;
         }
-        btn.disabled = false;
         if (err) {
           err.hidden = false;
           err.textContent = String(ex.message || ex);
@@ -266,7 +529,8 @@
           body: JSON.stringify({
             repo_url: demoRepos[demo] || 'https://github.com/lupong/toolpain',
             ref: 'main',
-            demo: demo
+            demo: demo,
+            ticket: ($('#ticket') && $('#ticket').value.trim()) || undefined
           })
         }).then(function (r) { return r.json(); }).then(function (j) {
           location.href = 'scan.html?id=' + encodeURIComponent(j.id) + '&state=in-progress&demo=' + encodeURIComponent(demo);
@@ -344,16 +608,35 @@
 
     validate(false);
     syncByo();
-    var ops = $('#ops-status');
-    if (ops) {
+    var refreshHealth = function () {
       fetch('/api/health').then(function (r) { return r.json(); }).then(function (h) {
-        ops.textContent = (h.provisioner || '?') + ' · ' + (h.llm_mode || '?') + ' · cg=' + (h.codegen_mode || 'llm');
-      }).catch(function () { ops.textContent = 'offline'; });
-    }
+        refreshPoolStatus(h);
+        refreshEstimate();
+        var ops = $('#ops-status');
+        if (ops && store.get('tp-admin') === '1') {
+          ops.hidden = false;
+          var pool = h.scanner_pool || {};
+          ops.textContent = (h.provisioner || '?') + ' · ' + (h.llm_mode || '?')
+            + ' · cg=' + (h.codegen_mode || 'llm')
+            + (pool.enabled ? (' · pool ' + (pool.ready || 0) + '/' + (pool.size || 0)) : '');
+        }
+      }).catch(function () {
+        if (scannerModeText) scannerModeText.textContent = 'Could not reach control plane health.';
+        var ops = $('#ops-status');
+        if (ops && store.get('tp-admin') === '1') {
+          ops.hidden = false;
+          ops.textContent = 'offline';
+        }
+      });
+    };
+    refreshHealth();
+    setInterval(refreshHealth, 15000);
   }
 
   /* ================= scan.html ================= */
   if (!document.body.hasAttribute('data-state')) return;
+
+  // Runtime/CPU/memory meters removed — not reliably available on live Vultr scans.
 
   var cy = null;
   var graphEpoch = 0;
@@ -435,6 +718,16 @@
     var bad = $('#bad-url');
     if (bad && params.get('url')) bad.value = params.get('url');
     setState('error');
+    var failBtn = $('#copy-failure-error');
+    if (failBtn && scanId) {
+      failBtn.hidden = false;
+      failBtn.onclick = function () {
+        fetch('/api/scans/' + encodeURIComponent(scanId) + '/verify-link', { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (body) { copyText(body.note || '', failBtn); });
+      };
+    }
+    if (scanId) renderDiagnostics(scanId);
   }
 
   function classify(status, error) {
@@ -488,11 +781,11 @@
     });
   }
 
-  function markStep(stage, status) {
+  function markStep(stage, status, metaText) {
     var items = $$('#stepper .tp-stepper__item');
     var idx = STAGE_ORDER.indexOf(stage);
     if (idx < 0 || !items[idx]) return;
-    function paint(li, st) {
+    function paint(li, st, label) {
       li.className = 'tp-stepper__item tp-stepper__item--' + st;
       var use = li.querySelector('use');
       var icon = st === 'done' ? '#i-check' : st === 'running' ? '#i-spin' : st === 'failed' ? '#i-x' : '#i-dot';
@@ -500,11 +793,14 @@
       if (st === 'running') li.setAttribute('aria-current', 'step');
       else li.removeAttribute('aria-current');
       var meta = li.querySelector('.tp-stepper__meta');
-      if (meta && (st === 'pending' || st === 'running' || meta.textContent === 'pending' || meta.textContent === 'running')) {
-        meta.textContent = st === 'done' ? 'done' : st;
+      if (meta) {
+        if (label) meta.textContent = label;
+        else if (st === 'pending' || st === 'running' || meta.textContent === 'pending' || meta.textContent === 'running' || meta.textContent.indexOf('retry') === 0 || meta.textContent.indexOf('attempt') === 0) {
+          meta.textContent = st === 'done' ? 'done' : st;
+        }
       }
     }
-    paint(items[idx], status);
+    paint(items[idx], status, metaText || null);
     if (status !== 'failed') {
       for (var i = 0; i < idx; i++) {
         if (items[i].className.indexOf('--failed') < 0) paint(items[i], 'done');
@@ -558,10 +854,8 @@
     setText('#time-label', '00:00 / 15:00');
     var timeFill = $('#time-fill');
     if (timeFill) timeFill.style.setProperty('--pct', '0%');
-    setMeter('#cpu-value', '#cpu-fill', '—', null);
-    setMeter('#mem-value', '#mem-fill', '—', null);
     setText('#net-value', '—');
-    setText('#net-meta', scanId ? ('tp_internal_' + scanId) : '—');
+    setText('#net-meta', scanId ? 'pending isolate' : '—');
     setText('#decoy-planted', '0');
     setText('#egress-count', '0');
     setText('#tool-heading-meta', '');
@@ -591,6 +885,49 @@
     if (!exists) sink.appendChild(el('li', '', host));
   }
 
+  function finishFromScan(data) {
+    data = data || {};
+    if (data.status === 'done') {
+      markStep('destroy', 'done');
+      offerReport();
+      return;
+    }
+    if (data.status === 'cancelled') {
+      showCancelled();
+      return;
+    }
+    if (data.status === 'timeout') {
+      loadReport(scanId).then(function (report) {
+        showError('timeout', data.detail);
+        var open = document.querySelector('#err-timeout [data-set-state]');
+        if (open) open.hidden = !report;
+      }, function () {
+        showError('timeout', data.detail);
+        var open = document.querySelector('#err-timeout [data-set-state]');
+        if (open) open.hidden = true;
+      });
+      return;
+    }
+    if (data.status === 'failed') {
+      showError(classify(data.status, data.error, data.detail), data.detail);
+    }
+  }
+
+  function pollScanTerminal() {
+    if (!scanId) return;
+    fetch('/api/scans/' + encodeURIComponent(scanId)).then(function (r) { return r.json(); }).then(function (s) {
+      if (!s || !s.status) return;
+      if (s.status === 'done' || s.status === 'failed' || s.status === 'cancelled' || s.status === 'timeout') {
+        if (es) { es.close(); es = null; }
+        finishFromScan({
+          status: s.status,
+          error: s.error_code,
+          detail: s.error_detail
+        });
+      }
+    }).catch(function () { /* ignore transient poll errors */ });
+  }
+
   function handleStage(data) {
     if (!data || (data.msg || '').indexOf('status=') === 0) return;
     var ts = (data.ts || '').toString();
@@ -599,15 +936,39 @@
       window.TP.appendLog({ ts: ts || '--:--:--', level: data.level || 'info', stage: data.stage || '', msg: data.msg || '' });
     }
     var payload = data.data || {};
-    if (payload.error) markStep(data.stage || 'analyze', 'failed');
-    else if (data.stage) markStep(data.stage, 'running');
+    var attempt = typeof payload.attempt === 'number' ? payload.attempt : null;
+    var attempts = typeof payload.attempts === 'number' ? payload.attempts : null;
+    var retrying = payload.retrying === true ||
+      (attempt != null && attempts != null && attempt < attempts) ||
+      /retrying\s*\(/i.test(data.msg || '');
+    // Legacy events (before retrying flag): "sending the failure back" mid-loop.
+    if (!retrying && payload.error && /sending the failure back/i.test(data.msg || '') &&
+        !(attempt != null && attempts != null && attempt >= attempts)) {
+      retrying = true;
+    }
+    if (payload.error && retrying) {
+      // Mid-codegen repair — keep the step spinning, do not treat as final failure.
+      var retryLabel = (attempt != null && attempts != null)
+        ? ('retrying ' + attempt + '/' + attempts)
+        : 'retrying';
+      markStep(data.stage || 'build', 'running', retryLabel);
+    } else if (payload.error) {
+      markStep(data.stage || 'analyze', 'failed');
+    } else if (data.stage) {
+      var runLabel = null;
+      if (attempt != null && attempts != null) runLabel = 'attempt ' + attempt + '/' + attempts;
+      markStep(data.stage, 'running', runLabel);
+    }
+    // Destroy means the sandbox/VM is gone — if CP already terminalized, leave the spinner.
+    if (data.stage === 'destroy') {
+      pollScanTerminal();
+      setTimeout(pollScanTerminal, 800);
+    }
     if (data.stage === 'isolate' || payload.network === 'blocked') {
       setText('#net-value', 'BLOCKED');
-      setText('#net-meta', 'tp_internal_' + (scanId || 'scan') + ' · --internal');
+      setText('#net-meta', 'internal only');
     }
     if (payload.decoys != null) setText('#decoy-planted', String(payload.decoys));
-    if (typeof payload.cpu === 'number') setMeter('#cpu-value', '#cpu-fill', Math.round(payload.cpu) + '%', Math.round(payload.cpu));
-    if (typeof payload.mem === 'number') setMeter('#mem-value', '#mem-fill', Math.round(payload.mem) + '%', Math.round(payload.mem));
     if (payload.tools && payload.tools.length) {
       payload.tools.forEach(function (t) {
         var found = null;
@@ -652,7 +1013,8 @@
     if (report.verdict === 'over_privileged') {
       var extra = tools.filter(function (t) { return t.verdict === 'exceeds_claim'; }).length;
       var noun = extra === 1 ? 'tool' : 'tools';
-      return 'Over-privileged: ' + extra + ' ' + noun + ' can do more than they claim.';
+      var claim = extra === 1 ? 'it claims' : 'they claim';
+      return 'Over-privileged: ' + extra + ' ' + noun + ' can do more than ' + claim + '.';
     }
     if (report.verdict === 'suspicious') return 'Suspicious: worth a closer look.';
     var crit = findings.filter(function (f) { return f.severity === 'critical'; }).length;
@@ -662,11 +1024,38 @@
     return 'Ouch: ' + n + ' ' + topSev + ' finding' + (n === 1 ? '' : 's') + '.';
   }
 
+  function derived(report) {
+    var tools = report.tools || [];
+    var combos = report.toxic_combos || [];
+    var attempted = (report.egress && report.egress.attempted) || [];
+    var decoy = 0;
+    tools.forEach(function (t) { decoy += Number(t.decoy_reads) || 0; });
+    var st = report.stats || {};
+    var undeclared = attempted.filter(function (a) { return a.declared === false; });
+    // Older reports omit declared; fall back to attempted length.
+    var egressCount = attempted.some(function (a) { return 'declared' in a; })
+      ? undeclared.length
+      : (st.egress_attempted != null ? st.egress_attempted : attempted.length);
+    return {
+      tools: tools.length,
+      undocumented: tools.filter(function (t) {
+        var src = t.sources || [];
+        return src.length && src.indexOf('D') < 0;
+      }).length,
+      critical_tier: tools.filter(function (t) { return t.privilege === 'critical'; }).length,
+      toxic_combos: combos.length,
+      egress_attempted: egressCount,
+      decoy_reads: decoy,
+      research_profiled: st.research_profiled != null ? st.research_profiled : tools.length,
+      research_total: st.research_total != null ? st.research_total : tools.length
+    };
+  }
+
   function lede(report) {
     var findings = report.findings || [];
-    var stats = report.stats || {};
     if (report.verdict === 'clean') {
-      var n = stats.tools != null ? stats.tools : (report.tools || []).length;
+      var n = derived(report).tools;
+      if (n === 1) return 'The tool did what it claimed. No decoy reads, no undeclared egress.';
       return 'All ' + n + ' tools did what they claimed. No decoy reads, no undeclared egress.';
     }
     var top = findings[0];
@@ -836,17 +1225,21 @@
       });
     }
 
-    var stats = report.stats || {};
+    var stats = derived(report);
+    var listedOnly = report.coverage === 'list_only';
     var statHost = $('#stats');
     if (statHost) {
-      var listedOnly = report.coverage === 'list_only';
+      var researchLabel = (stats.research_profiled < stats.research_total)
+        ? (stats.research_profiled + ' / ' + stats.research_total)
+        : String(stats.research_total);
       var tiles = [
-        ['Tools found', stats.tools != null ? stats.tools : (report.tools || []).length, ''],
-        ['Undocumented', listedOnly ? '—' : (stats.undocumented || 0), !listedOnly && stats.undocumented ? 'tp-stat--high' : ''],
-        ['Critical-tier tools', listedOnly ? '—' : (stats.critical_tier || 0), !listedOnly && stats.critical_tier ? 'tp-stat--critical' : ''],
-        ['Toxic combos', stats.toxic_combos != null ? stats.toxic_combos : (report.toxic_combos || []).length, (stats.toxic_combos || (report.toxic_combos || []).length) ? 'tp-stat--high' : ''],
-        ['Undeclared egress hosts', listedOnly ? '—' : (stats.egress_attempted || 0), !listedOnly && stats.egress_attempted ? 'tp-stat--critical' : ''],
-        ['Decoy reads', listedOnly ? '—' : (stats.decoy_reads || 0), !listedOnly && stats.decoy_reads ? 'tp-stat--critical tp-stat--alert' : '']
+        ['Tools found', stats.tools, ''],
+        ['Research profiles', listedOnly ? '—' : researchLabel, !listedOnly && stats.research_profiled < stats.research_total ? 'tp-stat--high' : ''],
+        ['Undocumented', listedOnly ? '—' : stats.undocumented, !listedOnly && stats.undocumented ? 'tp-stat--high' : ''],
+        ['Critical-tier tools', listedOnly ? '—' : stats.critical_tier, !listedOnly && stats.critical_tier ? 'tp-stat--critical' : ''],
+        ['Toxic combos', stats.toxic_combos, stats.toxic_combos ? 'tp-stat--high' : ''],
+        ['Undeclared egress hosts', listedOnly ? '—' : stats.egress_attempted, !listedOnly && stats.egress_attempted ? 'tp-stat--critical' : ''],
+        ['Decoy reads', listedOnly ? '—' : stats.decoy_reads, !listedOnly && stats.decoy_reads ? 'tp-stat--critical tp-stat--alert' : '']
       ];
       clear(statHost);
       tiles.forEach(function (tile) {
@@ -877,6 +1270,18 @@
     }
     var banner = $('#list-only-banner');
     if (banner) banner.hidden = report.coverage !== 'list_only';
+    var researchBanner = $('#research-cap-banner');
+    if (researchBanner) {
+      var rp = stats.research_profiled;
+      var rt = stats.research_total;
+      if (!listedOnly && rp < rt) {
+        researchBanner.hidden = false;
+        researchBanner.textContent = 'LLM research profiled ' + rp + ' of ' + rt +
+          ' tools (optional TOOLPAIN_MAX_PROFILES cap). Every tool was still probed.';
+      } else {
+        researchBanner.hidden = true;
+      }
+    }
     var costLine = $('#cost-line');
     if (costLine) {
       var costs = report.costs || {};
@@ -892,12 +1297,11 @@
     }
     var doneText = $('#done-meta-text');
     if (doneText) {
-      var dur = 'VM destroyed';
-      if (scan.created_at && scan.updated_at) {
+      if (scan.demo) doneText.textContent = 'demo replay';
+      else if (scan.created_at && scan.updated_at) {
         var seconds = Math.max(0, Math.round((Date.parse(scan.updated_at) - Date.parse(scan.created_at)) / 1000));
-        dur = fmt(seconds) + ' · VM destroyed';
-      }
-      doneText.textContent = dur;
+        doneText.textContent = fmt(seconds) + ' · VM destroyed';
+      } else doneText.textContent = 'VM destroyed';
     }
 
     setText('#count-tools', String((report.tools || []).length));
@@ -909,6 +1313,7 @@
     setText('#count-drift', String(drift.length));
     var driftTab = $('#tab-drift');
     if (driftTab) driftTab.hidden = drift.length === 0;
+    renderDiagnostics(scanId || report.scan_id);
 
     renderTools(report.tools || []);
     renderFindings(findings);
@@ -1296,24 +1701,7 @@
     es.addEventListener('done', function (ev) {
       var data = {};
       try { data = JSON.parse(ev.data); } catch (e) { /* keep empty */ }
-      if (data.status === 'done') {
-        markStep('destroy', 'done');
-        offerReport();
-      } else if (data.status === 'cancelled') {
-        showCancelled();
-      } else if (data.status === 'timeout') {
-        loadReport(scanId).then(function (report) {
-          showError('timeout', data.detail);
-          var open = document.querySelector('#err-timeout [data-set-state]');
-          if (open) open.hidden = !report;
-        }, function () {
-          showError('timeout', data.detail);
-          var open = document.querySelector('#err-timeout [data-set-state]');
-          if (open) open.hidden = true;
-        });
-      } else {
-        showError(classify(data.status, data.error, data.detail), data.detail);
-      }
+      finishFromScan(data);
       es.close();
     });
     es.onerror = function () { /* browser retries */ };
@@ -1377,16 +1765,70 @@
   }
 
   function wireRecordLinks(id, share) {
-    var panel = $('#record-panel');
+    var panel = $('#ticket-panel');
     var review = $('#review-record');
     var pdf = $('#download-pdf');
-    var frame = $('#certificate-frame');
+    var note = $('#copy-note');
+    var verify = $('#copy-verify');
+    var failure = $('#copy-failure');
+    var jsonLink = $('#download-json');
     var htmlUrl = share ? ('/share/' + encodeURIComponent(share) + '/certificate') : ('/api/scans/' + encodeURIComponent(id) + '/certificate');
     var pdfUrl = htmlUrl + '.pdf';
     if (panel) panel.hidden = false;
-    if (review) review.hidden = false;
-    if (frame) frame.src = htmlUrl;
+    if (review) { review.hidden = false; review.href = htmlUrl; }
     if (pdf) { pdf.hidden = false; pdf.href = pdfUrl; }
+    if (jsonLink && id) {
+      jsonLink.href = '/api/scans/' + encodeURIComponent(id) + '/report';
+      jsonLink.setAttribute('download', id + '.json');
+    }
+    if (note) note.hidden = false;
+    if (verify) verify.hidden = false;
+    if (failure) failure.hidden = true;
+    function copyFrom(kind, btn) {
+      if (!btn || !id) return;
+      btn.onclick = function () {
+        fetch('/api/scans/' + encodeURIComponent(id) + '/verify-link', { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (body) {
+            if (kind === 'verify') copyText(body.url || '', btn);
+            else copyText(body.note || '', btn);
+            if (body.expires_at) {
+              var when = new Date(body.expires_at * 1000).toLocaleDateString();
+              setText('#share-expiry', 'Verify link expires ' + when);
+            }
+          });
+      };
+    }
+    copyFrom('note', note);
+    copyFrom('verify', verify);
+  }
+
+  function renderDiagnostics(id) {
+    var roots = ['#diagnostics-body', '#error-diagnostics'].map(function (sel) { return $(sel); }).filter(Boolean);
+    if (!roots.length || !id) return;
+    fetch('/api/scans/' + encodeURIComponent(id) + '/diagnostics').then(function (r) {
+      if (!r.ok) return null;
+      return r.json();
+    }).then(function (body) {
+      if (!body) return;
+      roots.forEach(function (root) {
+        clear(root);
+        (body.stages || []).forEach(function (stage) {
+          var row = el('div', '');
+          var label = stage.stage + ' · ' + stage.status;
+          if (stage.duration_sec != null) label += ' · ' + stage.duration_sec + 's';
+          row.appendChild(el('div', 'tp-eyebrow', label));
+          if (stage.log_excerpt) row.appendChild(el('pre', 'mono', stage.log_excerpt));
+          root.appendChild(row);
+        });
+        if (body.error_code) {
+          root.appendChild(el('p', '', 'Error ' + body.error_code + (body.error_detail ? ': ' + body.error_detail : '')));
+        }
+        if (body.log_excerpt && !(body.stages || []).length) {
+          root.appendChild(el('pre', 'mono', body.log_excerpt));
+        }
+      });
+    }).catch(function () {});
   }
 
   function wireCompare(id) {
@@ -1462,6 +1904,11 @@
       window.TP.scan = s;
       setRepo(s.repo_url, s.ref, '');
       setText('#scan-id', 'scan ' + s.id);
+      var ticketChip = $('#ticket-chip');
+      if (ticketChip) {
+        ticketChip.hidden = !s.ticket;
+        ticketChip.textContent = s.ticket || '';
+      }
       setText('#account-mode-live', s.account_mode === 'byo' ? 'your account' : 'toolpain account');
       document.title = 'Scan ' + s.id + ' · ToolPain';
       if (s.status === 'done') {
@@ -1676,7 +2123,7 @@
       var repo = report.repo || {};
       lines.push([(repo.url || '').replace('https://github.com/', '') + (repo.commit ? ' @ ' + String(repo.commit).slice(0, 7) : '')]);
       if (repo.upstream) lines.push(['Upstream ' + repo.upstream]);
-      lines.push([((report.stats && report.stats.tools) || (report.tools || []).length) + ' tools']);
+      lines.push([derived(report).tools + ' tools']);
     } else if (tool) {
       kind.textContent = 'Tool · ' + (tool.privilege || 'unknown') + ' tier';
       if (tool.claimed) lines.push(['Claimed: ' + tool.claimed]);

@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from runner.models import CallOutcome, DiscoveredTool
-from runner.probe import _call_with_retry, assign_to_windows, generate_args
+from runner.probe import ProbeResult, _call_with_retry, assign_to_windows, generate_args, summarize
+from sandbox.models import TraceEvent
 
 COLLECTOR = "collector.sinkhole.local"
 
@@ -108,6 +109,32 @@ async def test_no_retry_for_non_schema_error() -> None:
     client = _StubClient("kaboom")
     _, retried = await _call_with_retry(client, tool, "http://fixture.local/", 5)  # type: ignore[arg-type]
     assert not retried and len(client.calls) == 1
+
+
+def test_fixture_container_ip_is_not_undeclared_egress() -> None:
+    box = SimpleNamespace(
+        sinkhole_ip="10.66.207.53",
+        fixture_ip="10.66.207.80",
+        decoys=SimpleNamespace(values=[], is_decoy_path=lambda path: False),
+    )
+    result = summarize(
+        ProbeResult(tool="convert_to_markdown", exercised=True),
+        [
+            TraceEvent(
+                ts=1.0,
+                pid=1,
+                kind="net",
+                detail="connect",
+                syscall="connect",
+                addr="10.66.207.80",
+                port=80,
+            )
+        ],
+        [],
+        box,  # type: ignore[arg-type]
+    )
+    assert result.egress_hosts == []
+    assert result.network == ["fixture.local:80"]
 
 
 def test_decoy_trap_fetch_report_trips_decoy_and_sinkhole(decoy_scan: dict[str, Any]) -> None:

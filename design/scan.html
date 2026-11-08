@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scan s_8f2c · ToolPain</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -47,6 +48,7 @@
     <div class="tp-scanbar__meta">
       <span class="tp-chip tp-chip--repo" id="repo-chip-live"><span id="repo-chip-name">—</span> <span class="muted" id="repo-chip-ref"></span></span>
       <span class="mono muted" id="scan-id" style="font-size:12px">scan —</span>
+      <span class="mono muted" id="ticket-chip" hidden style="font-size:12px"></span>
       <span class="tp-badge tp-badge--outline" id="account-mode-live">toolpain account</span>
     </div>
     <div class="tp-scanbar__end">
@@ -93,15 +95,15 @@
       </div>
       <div class="tp-netstatus">
         <svg class="tp-icon" style="width:28px;height:28px;color:var(--low);stroke-width:2"><use href="#i-lock"/></svg>
-        <div><div class="tp-help" style="font-size:12px">Network</div><div class="tp-netstatus__value" id="net-value">—</div></div>
-        <div class="tp-netstatus__meta" id="net-meta">—</div>
+        <div class="tp-netstatus__body">
+          <div class="tp-help" style="font-size:12px">Network</div>
+          <div class="tp-netstatus__value" id="net-value">—</div>
+          <div class="tp-netstatus__meta" id="net-meta">—</div>
+        </div>
       </div>
       <dl class="tp-dl">
-        <dt>Runtime</dt><dd>gVisor (runsc)</dd>
-        <dt>DNS</dt><dd>sinkhole 10.66.12.53</dd>
+        <dt>DNS</dt><dd>sinkhole (internal)</dd>
       </dl>
-      <div class="tp-meter" id="meter-cpu"><div class="tp-meter__head"><span>CPU</span><span id="cpu-value">—</span></div><div class="tp-meter__track" role="meter" aria-label="CPU" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tp-meter__fill" id="cpu-fill" style="--pct:0%"></div></div></div>
-      <div class="tp-meter" id="meter-mem"><div class="tp-meter__head"><span>Memory</span><span id="mem-value">—</span></div><div class="tp-meter__track" role="meter" aria-label="Memory" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tp-meter__fill" id="mem-fill" style="--pct:0%"></div></div></div>
       <div class="tp-meter tp-meter--time" id="meter-time"><div class="tp-meter__head"><span>Time limit</span><span id="time-label">00:00 / 15:00</span></div><div class="tp-meter__track" role="meter" aria-label="Time limit" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="tp-meter__fill" id="time-fill" style="--pct:0%"></div></div></div>
       <div class="tp-counters">
         <div class="tp-counter"><span class="tp-counter__label">Decoys planted</span><span class="tp-counter__value" id="decoy-planted">0</span></div>
@@ -158,8 +160,9 @@
       <button type="button" class="tp-tab" role="tab" id="tab-findings" aria-controls="p-findings" aria-selected="false" tabindex="-1">Findings <span class="tp-tab__count" id="count-findings">0</span></button>
       <button type="button" class="tp-tab" role="tab" id="tab-combos" aria-controls="p-combos" aria-selected="false" tabindex="-1">Toxic combos <span class="tp-tab__count" id="count-combos">0</span></button>
       <button type="button" class="tp-tab" role="tab" id="tab-network" aria-controls="p-network" aria-selected="false" tabindex="-1">Network <span class="tp-tab__count" id="count-network">0</span></button>
-      <button type="button" class="tp-tab" role="tab" id="tab-drift" aria-controls="p-drift" aria-selected="false" tabindex="-1">Fork drift <span class="tp-tab__count" id="count-drift">0</span></button>
+      <button type="button" class="tp-tab" role="tab" id="tab-drift" aria-controls="p-drift" aria-selected="false" tabindex="-1" hidden>Fork drift <span class="tp-tab__count" id="count-drift">0</span></button>
       <button type="button" class="tp-tab" role="tab" id="tab-config" aria-controls="p-config" aria-selected="false" tabindex="-1">Least-privilege config</button>
+      <button type="button" class="tp-tab" role="tab" id="tab-diagnostics" aria-controls="p-diagnostics" aria-selected="false" tabindex="-1">Diagnostics</button>
     </div>
     </div>
   </div>
@@ -174,17 +177,35 @@
           <p class="tp-verdict-hero__text" id="verdict-text"></p>
           <p class="tp-verdict-hero__rec" id="verdict-rec"></p>
           <p class="tp-banner" id="list-only-banner" hidden>Listed, not probed.</p>
+          <p class="tp-banner" id="research-cap-banner" hidden></p>
           <p class="tp-help" id="cost-line"></p>
           <p class="tp-help" id="share-expiry"></p>
-          <div class="tp-row">
-            <a class="tp-btn tp-btn--primary" href="#" id="download-json" download="toolpain-s_8f2c.json"><svg class="tp-icon"><use href="#i-download"/></svg>Download JSON</a>
-            <button type="button" class="tp-btn tp-btn--secondary" id="share-report" hidden>Share report</button>
-            <a class="tp-btn tp-btn--secondary" id="review-record" href="#record-panel" hidden>Review scan record</a>
-            <input id="compare-with" class="tp-input" type="text" placeholder="Other scan id" hidden style="max-width:180px">
-            <button type="button" class="tp-btn tp-btn--ghost" id="compare-btn" hidden>Compare with…</button>
-            <button type="button" class="tp-btn tp-btn--ghost" id="replay-scan" hidden><svg class="tp-icon"><use href="#i-play"/></svg>Replay scan</button>
-            <button type="button" class="tp-btn tp-btn--secondary" data-copy-target="#cfg-text"><svg class="tp-icon"><use href="#i-copy"/></svg><span>Copy least-privilege config</span></button>
-          </div>
+          <section class="tp-panel" id="ticket-panel" hidden aria-label="Add to ticket">
+            <div class="tp-panel__head" style="padding:12px 16px">
+              <div>
+                <h2 class="tp-panel__title">Add to ticket</h2>
+                <p class="tp-help" id="ticket-panel-help">Download the certificate and paste the note into the ticket.</p>
+              </div>
+            </div>
+            <div class="tp-row" style="padding:0 16px 16px">
+              <a class="tp-btn tp-btn--primary" id="download-pdf" hidden href="#"><svg class="tp-icon"><use href="#i-download"/></svg>Download certificate</a>
+              <button type="button" class="tp-btn tp-btn--secondary" id="copy-note" hidden>Copy ticket note</button>
+              <button type="button" class="tp-btn tp-btn--secondary" id="copy-verify" hidden>Copy verify link</button>
+              <button type="button" class="tp-btn tp-btn--secondary" id="copy-failure" hidden>Copy failure note</button>
+              <a class="tp-btn tp-btn--secondary" id="review-record" hidden target="_blank" rel="noopener">Review scan record</a>
+              <button type="button" class="tp-btn tp-btn--secondary" data-copy-target="#cfg-text"><svg class="tp-icon"><use href="#i-copy"/></svg><span>Copy least-privilege config</span></button>
+              <details class="tp-more">
+                <summary class="tp-btn tp-btn--ghost">More</summary>
+                <div class="tp-more__menu">
+                  <a id="download-json" href="#">Download JSON</a>
+                  <button type="button" class="tp-btn tp-btn--ghost" id="replay-scan" hidden>Replay scan</button>
+                  <input id="compare-with" class="tp-input" type="text" placeholder="Other scan id" hidden>
+                  <button type="button" class="tp-btn tp-btn--ghost" id="compare-btn" hidden>Compare</button>
+                  <button type="button" class="tp-btn tp-btn--ghost" id="share-report" hidden>Share report</button>
+                </div>
+              </details>
+            </div>
+          </section>
         </div>
         <div class="tp-panel tp-sevcounts" id="sev-panel">
           <h2 class="tp-eyebrow">Findings by severity</h2>
@@ -204,16 +225,6 @@
         <div id="artifacts-body" class="tp-stack" style="padding:0 16px 16px;gap:10px;font-size:13px"></div>
       </section>
 
-      <section class="tp-panel" id="record-panel" hidden aria-label="Scan record">
-        <div class="tp-panel__head" style="padding:12px 16px">
-          <div>
-            <h2 class="tp-panel__title">Scan record</h2>
-            <p class="tp-help" style="margin:4px 0 0">Certifies that this scan was performed. It is not a warranty that the server is safe.</p>
-          </div>
-          <a class="tp-btn tp-btn--primary" id="download-pdf" hidden><svg class="tp-icon"><use href="#i-download"/></svg>Download PDF</a>
-        </div>
-        <iframe id="certificate-frame" class="tp-record__frame" title="Scan record" style="display:block;width:100%;height:min(70vh,720px);min-height:420px;border:0;background:#fff"></iframe>
-      </section>
       <div class="tp-stats" id="stats"></div>
       <p class="tp-help" id="compare-result"></p>
       <div class="tp-panel tp-recap" id="recap"></div>
@@ -297,6 +308,11 @@
     <section class="tp-tabpanel" role="tabpanel" id="p-drift" aria-labelledby="tab-drift" hidden>
     </section>
 
+    <section class="tp-tabpanel" role="tabpanel" id="p-diagnostics" aria-labelledby="tab-diagnostics" hidden>
+      <div id="diagnostics-body" class="tp-stack" style="gap:12px"></div>
+      <p class="tp-help">The debug bundle is for an admin token. Ask DevOps to download it from this scan.</p>
+    </section>
+
     <!-- Least-privilege config -->
     <section class="tp-tabpanel" role="tabpanel" id="p-config" aria-labelledby="tab-config" hidden style="max-width:860px">
       <p class="muted" id="cfg-intro" style="font-size:14px;line-height:1.6"></p>
@@ -331,7 +347,7 @@
       <span class="tp-eyebrow" id="st-invalid">Invalid repo</span>
       <div class="tp-field">
         <label for="bad-url" class="tp-label">GitHub repository</label>
-        <input id="bad-url" class="tp-input tp-input--error" type="url" value="github.com/andrew" aria-invalid="true" aria-describedby="bad-url-err">
+        <input id="bad-url" class="tp-input tp-input--error" type="url" value="github.com/example" aria-invalid="true" aria-describedby="bad-url-err">
         <p class="tp-error-text" id="bad-url-err"><svg class="tp-icon"><use href="#i-alert"/></svg>Use a full repo link like https://github.com/owner/repo</p>
       </div>
     </section>
@@ -388,6 +404,8 @@
       <span class="tp-eyebrow">Scan failed</span>
       <h2 class="tp-state__title" id="st-failed">The scan stopped before a report</h2>
       <p class="tp-state__text" id="err-failed-detail">Nothing was left running.</p>
+      <button type="button" class="tp-btn tp-btn--secondary" id="copy-failure-error" hidden>Copy failure note</button>
+      <div id="error-diagnostics" class="tp-stack" style="gap:8px"></div>
       <a href="index.html" class="tp-btn tp-btn--primary" style="align-self:flex-start">Try another repo</a>
     </section>
 

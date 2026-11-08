@@ -18,13 +18,17 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
-from typing import Protocol
+from typing import Any, Protocol
 
 from mcp import StdioServerParameters
 
+from runner.services import ServiceSpec
 from sandbox.decoys import DecoySet, plant_decoys
 from sandbox.models import SinkholeRecord, TraceEvent
 from sandbox.trace import parse_strace_file
+
+if False:  # TYPE_CHECKING-friendly without circular import at runtime
+    from sandbox.sidecars import SidecarStack
 
 SANDBOX_DIR = Path(__file__).resolve().parent
 SINKHOLE_IMAGE = "toolpain-sinkhole:latest"
@@ -41,7 +45,7 @@ class SandboxError(RuntimeError):
 
 
 class Sandbox(Protocol):
-    """What the runner needs from any sandbox (real Docker or the fake replayer)."""
+    """What the runner needs from any sandbox (real Docker or the demo replayer)."""
 
     scan_id: str
     decoys: DecoySet
@@ -111,6 +115,7 @@ class DockerSandbox:
         pids_limit: int = 256,
         sinkhole_image: str = SINKHOLE_IMAGE,
         fixture_image: str = FIXTURE_IMAGE,
+        services: Sequence[ServiceSpec] | None = None,
     ) -> None:
         self.scan_id = safe_id(scan_id)
         self.image = image
@@ -118,6 +123,7 @@ class DockerSandbox:
         self.runtime = runtime
         self.memory, self.cpus, self.pids_limit = memory, cpus, pids_limit
         self.sinkhole_image, self.fixture_image = sinkhole_image, fixture_image
+        self.services = list(services or [])
         self.settle_sec = 0.6
         self.network = f"tp_internal_{self.scan_id}"
         self.octet = subnet_octet(self.scan_id)
@@ -129,6 +135,7 @@ class DockerSandbox:
         self._root: Path | None = None
         self._launches = 0
         self._started = False
+        self._sidecar_stack: Any | None = None
         self.decoys: DecoySet
 
     # -- paths -------------------------------------------------------------
@@ -177,6 +184,16 @@ class DockerSandbox:
             self._started = True
             self.decoys = plant_decoys(self.root / "workspace", self.scan_id)
             site = self._prepare_fixture_site()
+            if self.services:
+                from sandbox.sidecars import start_sidecars
+
+                self._sidecar_stack = await start_sidecars(
+                    scan_id=self.scan_id,
+                    network=self.network,
+                    services=self.services,
+                    subnet_prefix_ip=f"{SUBNET_PREFIX}.{self.octet}.",
+                    start_octet=90,
+                )
             await self._start_sinkhole()
             await self._start_fixture(site)
         except BaseException:
@@ -270,7 +287,11 @@ class DockerSandbox:
         ]
 
     async def _start_sinkhole(self) -> None:
-        overrides = f"{FIXTURE_HOSTNAME}={self.fixture_ip}"
+        pairs = [f"{FIXTURE_HOSTNAME}={self.fixture_ip}"]
+        if self._sidecar_stack:
+            for host, ip in self._sidecar_stack.hosts.items():
+                pairs.append(f"{host}={ip}")
+        overrides = ",".join(pairs)
         await run_docker(
             "run", "-d", "--name", self.sinkhole_name,
             "--label", f"toolpain.scan={self.scan_id}",

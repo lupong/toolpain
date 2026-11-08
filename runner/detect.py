@@ -118,6 +118,23 @@ def _python_score(path: Path, data: dict) -> int:
         score += 5
     if name in {"mcp-server-time", "mcp-server-fetch", "mcp-server-git"}:
         score += 10
+    # Soft-demote cloud-credential packages so monorepo defaults aren't EKS/IAM-first.
+    heavy = (
+        "eks",
+        "ecs",
+        "lambda",
+        "bedrock",
+        "sagemaker",
+        "iam",
+        "kubernetes",
+        "k8s",
+        "ccapi",
+    )
+    label = f"{name} {path.name}".lower()
+    if any(h in label for h in heavy):
+        score -= 20
+    if any(h in label for h in ("time", "fetch", "filesystem", "echo", "memory")):
+        score += 12
     if (path / "Dockerfile").exists():
         score += 5
     if path.name in {"src", "packages", "servers"}:
@@ -152,6 +169,29 @@ def _node_score(path: Path, data: dict) -> int:
     return score
 
 
+def _unknown_score(path: Path, name: str | None) -> int:
+    """Score Go / Rust / PHP / Java roots the same way python|node get a baseline."""
+    score = 10
+    label = name or path.name
+    if MCP_NAME_HINT.search(label):
+        score += 40
+    if (path / "README.md").exists():
+        score += 10
+    blob = ""
+    for filename in ("go.mod", "Cargo.toml", "composer.json", "pom.xml", "build.gradle"):
+        file = path / filename
+        if file.is_file():
+            try:
+                blob += file.read_text(encoding="utf-8", errors="replace")[:4000].lower()
+            except OSError:
+                continue
+    if "mcp" in blob or "modelcontextprotocol" in blob:
+        score += 50
+    if (path / "Dockerfile").exists():
+        score += 5
+    return score
+
+
 def detect_language_at(path: Path) -> tuple[Language, str | None, list[str]]:
     """Return (language, package_name, relative manifest file names) for a directory."""
     manifests: list[str] = []
@@ -173,6 +213,10 @@ def detect_language_at(path: Path) -> tuple[Language, str | None, list[str]]:
     if (path / "server.py").exists():
         manifests.append("server.py")
         return "python", path.name, manifests
+    for name in ("go.mod", "Cargo.toml", "composer.json", "pom.xml", "build.gradle"):
+        if (path / name).exists():
+            manifests.append(name)
+            return "unknown", path.name, manifests
     return "unknown", None, manifests
 
 
@@ -185,7 +229,17 @@ def _iter_package_roots(root: Path) -> list[Path]:
         if len(rel_parts) > 6:
             dirnames.clear()
             continue
-        if "pyproject.toml" in filenames or "package.json" in filenames or "server.py" in filenames:
+        markers = (
+            "pyproject.toml",
+            "package.json",
+            "server.py",
+            "go.mod",
+            "Cargo.toml",
+            "composer.json",
+            "pom.xml",
+            "build.gradle",
+        )
+        if any(name in filenames for name in markers):
             found.append(dirpath)
     if not found:
         found.append(root)
@@ -223,7 +277,7 @@ def detect_package(root: Path, *, prefer_subdir: str | None = None) -> RepoManif
             data = _read_json(path / "package.json") if (path / "package.json").exists() else {}
             score = _node_score(path, data)
         else:
-            score = 1
+            score = _unknown_score(path, name)
         # Prefer deeper leaves when scores tie (monorepo package vs root).
         score += min(len(path.relative_to(root).parts), 4)
         scored.append((score, path, lang, name, manifests))

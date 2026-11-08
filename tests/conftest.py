@@ -54,15 +54,15 @@ def decoy_image(docker_ok: bool) -> str:
 
 @pytest.fixture(scope="session")
 def decoy_scan() -> dict[str, object]:
-    """One full local scan of demo/decoy-trap-server (FakeSandbox), shared across test modules."""
+    """One full local scan of demo/decoy-trap-server (DemoSandbox), shared across test modules."""
     from runner.analyze import AnalysisInput, analyze_scan
     from runner.discover import discover
     from runner.events import NullSink
     from runner.launch import DECOY_SERVER
     from runner.probe import probe_tools
     from runner.report import build_report
-    from runner.research import FakeLlm, research_tools
-    from sandbox.fake import FakeSandbox
+    from runner.research import FixtureLlm, research_tools
+    from sandbox.demo import DemoSandbox
 
     source = DECOY_SERVER.parent
     readme = (source / "README.md").read_text()
@@ -70,9 +70,9 @@ def decoy_scan() -> dict[str, object]:
 
     async def go() -> dict[str, object]:
         sink = NullSink()
-        async with FakeSandbox("s_fix") as sb:
+        async with DemoSandbox("s_fix") as sb:
             discovery = await discover(sb.launcher, source_dir=source, readme_text=readme)
-            profiles = await research_tools(discovery, FakeLlm(), readme)
+            profiles = await research_tools(discovery, FixtureLlm(), readme)
             probes = await probe_tools(sb.launcher, sb, discovery.tools, sink=sink)
             data = AnalysisInput(
                 discovery=discovery,

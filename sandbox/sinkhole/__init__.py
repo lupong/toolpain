@@ -1,1 +1,1 @@
-"""In-sandbox sinkhole: fake DNS plus catch-all HTTP/TLS/TCP logger."""
+"""In-sandbox sinkhole: stub DNS plus catch-all HTTP/TLS/TCP logger."""

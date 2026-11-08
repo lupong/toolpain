@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ToolPain system</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="tp-container tp-container--narrow" style="padding:32px 0 64px">
+  <a href="index.html" class="tp-wordmark">ToolPain</a>
+  <h1 style="margin:16px 0 8px">System</h1>
+  <p class="tp-help">Admin only. A normal scan token cannot open this page's data.</p>
+  <form id="system-form" class="tp-stack" style="max-width:420px;margin:16px 0">
+    <label for="admin-token" class="tp-label">Admin token</label>
+    <input id="admin-token" class="tp-input" type="password" autocomplete="off">
+    <button type="submit" class="tp-btn tp-btn--primary">Open system</button>
+  </form>
+  <p id="system-error" class="tp-error-text" hidden>That token cannot open System.</p>
+  <pre id="system-out" class="mono" style="white-space:pre-wrap"></pre>
+</main>
+<script>
+(function () {
+  var form = document.getElementById('system-form');
+  var out = document.getElementById('system-out');
+  var err = document.getElementById('system-error');
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var token = document.getElementById('admin-token').value;
+    fetch('/api/system', { headers: { 'X-Admin-Token': token } }).then(function (r) {
+      if (r.status === 403) {
+        err.hidden = false;
+        out.textContent = '';
+        return null;
+      }
+      if (!r.ok) throw new Error('system unavailable');
+      try { localStorage.setItem('tp-admin', '1'); } catch (ex) {}
+      return r.json();
+    }).then(function (body) {
+      if (!body) return;
+      err.hidden = true;
+      out.textContent = JSON.stringify(body, null, 2);
+    }).catch(function () {
+      err.hidden = false;
+    });
+  });
+})();
+</script>
+</body>
+</html>

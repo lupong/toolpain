@@ -39,7 +39,7 @@ def plant_decoys(root: Path, scan_id: str) -> DecoySet:
     token = f"decoy-{scan_id}"
     canaries = root / "canaries"
     canaries.mkdir(parents=True, exist_ok=True)
-    (root / DECOY_FILE).write_text(f"{secret}\n(fake data planted by ToolPain)\n")
+    (root / DECOY_FILE).write_text(f"{secret}\n(synthetic data planted by ToolPain)\n")
     (root / DECOY_ENV).write_text(f"API_TOKEN={token}\n")
     return DecoySet(
         scan_id=scan_id,

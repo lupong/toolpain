@@ -29,7 +29,6 @@ FIXTURES: dict[str, dict[str, Any]] = {
         "size_kb": 24000,
         "language": "TypeScript",
     },
-    "https://github.com/andrew/playwright-mcp": {"size_kb": 24000, "language": "TypeScript"},
     "https://github.com/lupong/toolpain": {"size_kb": 500, "language": "Python"},
 }
 
@@ -51,12 +50,29 @@ def assumptions_for_size(size_kb: int) -> dict[str, Any]:
         band, tools, minutes = "medium", 15, 8
     else:
         band, tools, minutes = "large", 40, 15
+    codegen_mode = (os.environ.get("CODEGEN_MODE") or "llm").lower()
+    live_codegen = codegen_mode not in {"heuristic", "off", "false", "0"}
+    # Live codegen repairs burn extra model calls and wall time.
+    codegen_calls = 6 if live_codegen else 1
+    if live_codegen:
+        minutes = minutes + 4
+    pool_on = os.environ.get("SCANNER_POOL_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    # Warm pool skips create+boot; shave estimate wall time when enabled.
+    if pool_on:
+        minutes = max(2, minutes - 2)
     return {
         "band": band,
+        # Research profiles every discovered tool by default (estimate uses band tool count).
         "tools": tools,
         "scanner_minutes": minutes,
-        "codegen_calls": 4,
+        "codegen_calls": codegen_calls,
         "size_mb": usd(mb),
+        "scanner_pool": pool_on,
     }
 
 

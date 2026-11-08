@@ -27,7 +27,7 @@ async def test_run_scan_posts_events_and_report_with_token() -> None:
         token="scan-token-1",
         control_plane_url="http://cp.test",
         local_path=Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server",
-        sandbox="fake",
+        sandbox="demo",
     )
     report = await run_scan_async(cfg)
 
@@ -62,7 +62,7 @@ async def test_run_scan_without_token_makes_no_http_calls() -> None:
         scan_id="s_local",
         repo_url="https://github.com/lupong/toolpain",
         local_path=Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server",
-        sandbox="fake",
+        sandbox="demo",
     )
     report = await run_scan_async(cfg, sink=sink)  # respx with no routes: any HTTP call would fail
     assert report["verdict"] == "flagged"
@@ -79,7 +79,7 @@ async def test_control_plane_errors_do_not_kill_the_scan() -> None:
         token="t",
         control_plane_url="http://cp.test",
         local_path=Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server",
-        sandbox="fake",
+        sandbox="demo",
     )
     assert (await run_scan_async(cfg))["verdict"] == "flagged"
 
@@ -106,7 +106,7 @@ async def test_local_run_refused_outside_demo(tmp_path: Path) -> None:
         scan_id="s_bad",
         repo_url="https://github.com/a/b",
         local_path=tmp_path,
-        sandbox="fake",
+        sandbox="demo",
     )
     with pytest.raises(LocalLaunchRefused):
         await run_scan_async(cfg)

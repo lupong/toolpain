@@ -8,3 +8,7 @@ toolpain.com {
 		-Server
 	}
 }
+
+www.toolpain.com {
+	redir https://toolpain.com{uri} permanent
+}

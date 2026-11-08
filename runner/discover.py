@@ -3,7 +3,7 @@
 * **R** runtime default  - start the server as-is and ``tools/list``.
 * **F** runtime + flags  - parse ``--help`` / README for capability flags, retry with each.
 * **S** static source    - regex/AST scan of the repo for tool registrations.
-* **D** docs             - tools named in the README (LLM extraction, or regex in fake mode).
+* **D** docs             - tools named in README / TOOLS.md (LLM extraction, or regex in fixture mode).
 
 A tool seen in S/R/F but absent from D is *undocumented*; a tool seen only via F is
 *hidden behind a flag*.
@@ -19,6 +19,7 @@ from typing import Protocol
 
 from mcp import StdioServerParameters
 
+from runner.errors import ScanFailure
 from runner.mcp_client import McpClientError, snapshot_server
 from runner.models import (
     SOURCE_ORDER,
@@ -88,12 +89,64 @@ _IDENT = r"[A-Za-z_][A-Za-z0-9_.\-]*"
 _BULLET_RE = re.compile(rf"^\s*(?:[-*+]|\d+\.)\s+\**`?({_IDENT})`?\**\s*(?::|-|–|—|\(|$)")
 _TABLE_RE = re.compile(rf"^\|\s*\**`?({_IDENT})`?\**\s*\|")
 _TOOLISH_BULLET_RE = re.compile(r"^\s*(?:[-*+])\s+\**`([a-z][a-z0-9]*_[a-z0-9_]+)`\**")
+_CALLED_TOOL_RE = re.compile(r"`([a-z][a-z0-9]*_[a-z0-9_]*)\s*\(")
 _HEADING_NAME_RE = re.compile(rf"^`?({_IDENT})`?$")
 _TABLE_HEADER_WORDS = {"name", "tool", "tools", "description", "parameter", "parameters"}
+# README section words / API-doc headings that LLMs and regex often mistake for tools.
+_DOCS_NOISE_NAMES = frozenset(
+    {
+        "function",
+        "functions",
+        "setup",
+        "supported",
+        "usage",
+        "args",
+        "arguments",
+        "returns",
+        "return",
+        "parameters",
+        "parameter",
+        "description",
+        "example",
+        "examples",
+        "overview",
+        "installation",
+        "configuration",
+        "config",
+        "features",
+        "requirements",
+        "authentication",
+        "authorization",
+        "license",
+        "changelog",
+        "contributing",
+        "introduction",
+        "getting",
+        "started",
+        "options",
+        "response",
+        "request",
+        "notes",
+        "see",
+        "also",
+    }
+)
+_TITLE_CASE_TOKEN = re.compile(r"^[A-Z][a-z]{2,24}$")
+
+
+def is_plausible_tool_name(name: str) -> bool:
+    """Drop README/API heading tokens that are not real MCP tool names."""
+    text = (name or "").strip()
+    if not text or text.lower() in _DOCS_NOISE_NAMES or text.lower() in _TABLE_HEADER_WORDS:
+        return False
+    # Single Title-case English words ("Function", "Setup", "Usage") are headings.
+    if _TITLE_CASE_TOKEN.fullmatch(text):
+        return False
+    return True
 
 
 def parse_docs_tools(readme: str) -> list[str]:
-    """Regex extraction of tool names from README markdown (used in fake mode).
+    """Regex extraction of tool names from README markdown (used in fixture mode).
 
     Nested bullets under a tool, and bullets under a tool subheading, are
     arguments. They are not extra tools.
@@ -119,7 +172,7 @@ def parse_docs_tools(readme: str) -> list[str]:
             if tools_level is not None and level > tools_level:
                 inside_tool_heading = True
                 m = _HEADING_NAME_RE.match(text)
-                if m:
+                if m and is_plausible_tool_name(m.group(1)):
                     found.append(m.group(1))
             elif re.search(r"\btools?\b", text, re.IGNORECASE):
                 tools_level = level
@@ -132,7 +185,7 @@ def parse_docs_tools(readme: str) -> list[str]:
             table = _TABLE_RE.match(line)
             bullet = _BULLET_RE.match(line)
             m = bullet or table
-            if not m or m.group(1).lower() in _TABLE_HEADER_WORDS:
+            if not m or not is_plausible_tool_name(m.group(1)):
                 continue
             if table:
                 found.append(m.group(1))
@@ -144,8 +197,9 @@ def parse_docs_tools(readme: str) -> list[str]:
                 found.append(m.group(1))
         else:
             m = _TOOLISH_BULLET_RE.match(line)
-            if m:
+            if m and is_plausible_tool_name(m.group(1)):
                 found.append(m.group(1))
+        found.extend(n for n in _CALLED_TOOL_RE.findall(line) if is_plausible_tool_name(n))
     return list(dict.fromkeys(found))
 
 
@@ -156,6 +210,7 @@ async def extract_docs_tools(readme: str, extractor: DocsExtractor | None = None
             names = await extractor(readme)
         except Exception:
             names = []
+        names = [n for n in names if is_plausible_tool_name(str(n))]
         if names:
             return list(dict.fromkeys(names))
     return parse_docs_tools(readme)
@@ -371,8 +426,14 @@ async def discover(
     """Run all four discovery sources and merge them into one result."""
     notes: list[str] = []
 
-    # R: runtime default
-    base = await snapshot_server(launch((), "discover"), init_timeout=init_timeout)
+    # R: runtime default — MCP init failures are launch failures, not opaque internals.
+    try:
+        base = await snapshot_server(launch((), "discover"), init_timeout=init_timeout)
+    except (McpClientError, OSError) as exc:
+        raise ScanFailure(
+            "launch_failed",
+            f"MCP server failed to initialize during discovery: {exc}"[:500],
+        ) from exc
     runtime_names = {t.name for t in base.tools}
 
     # D: docs
@@ -462,17 +523,38 @@ def _merge(
         sources[hit.name].add("S")
     argument_names = _schema_properties([*base.tools, *flag_tools.values()])
     known = set(runtime_names) | set(flag_tools) | {hit.name for hit in hits}
-    kept_docs = [name for name in docs_tools if name in known or name not in argument_names]
+    kept_docs = [
+        name
+        for name in docs_tools
+        if is_plausible_tool_name(name)
+        and (name in known or name not in argument_names)
+    ]
     for name in kept_docs:
         entry(name)
         sources[name].add("D")
 
     doc_set = set(kept_docs)
+    # Only treat README as a tool catalog when it names at least one real S/R/F tool.
+    # Heading-noise "tools" alone must not mark every runtime tool undocumented.
+    docs_catalog = bool(doc_set & known)
+    if have_docs and kept_docs and not docs_catalog:
+        notes = [
+            *notes,
+            "docs named tools that never appeared in code or runtime; "
+            "not treating README as a catalog for undocumented checks",
+        ]
+    elif have_docs and not kept_docs:
+        notes = [
+            *notes,
+            "docs present but no plausible tool names extracted; "
+            "skipping undocumented-tool inflation",
+        ]
+
     for name, e in by_name.items():
         src = sources[name]
         e.sources = _ordered(src)
         e.documented = "D" in src
-        e.undocumented = have_docs and "D" not in src and bool(src & {"S", "R", "F"})
+        e.undocumented = docs_catalog and "D" not in src and bool(src & {"S", "R", "F"})
         e.hidden_behind_flag = "F" in src and "R" not in src
         if name in doc_set and not (src & {"S", "R", "F"}):
             e.documented = True

@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from runner.harness import ProbeHarness
-from runner.probe import ProbeResult
+from runner.probe import FIXTURE_HOSTS, ProbeResult
 
 
 class ExpectationResult(BaseModel):
@@ -45,6 +45,9 @@ def score_expectations(
                 )
             )
         for host in plan.expect_hosts:
+            # fixture.local is our probe helper, not a host the server claims to contact.
+            if host.lower().split(":")[0] in FIXTURE_HOSTS:
+                continue
             observed = set(probe.egress_hosts + probe.network) if probe else set()
             hit = any(host in o or o in host for o in observed)
             out.append(

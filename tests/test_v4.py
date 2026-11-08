@@ -107,7 +107,8 @@ def test_estimate_small_local_and_large_vultr() -> None:
     assert small["assumptions"]["band"] == "small"
     assert small["assumptions"]["tools"] == 5
     assert large["assumptions"]["band"] == "large"
-    assert large["assumptions"]["scanner_minutes"] == 15
+    assert large["assumptions"]["scanner_minutes"] >= 15
+    assert small["assumptions"]["codegen_calls"] >= 1
     assert large["total_usd"] > small["total_usd"]
     assert {line["code"] for line in small["lines"]} == {"codegen", "research", "infra", "fetch"}
 
@@ -120,19 +121,34 @@ def test_cap_output_marks_truncation() -> None:
 
 
 def test_classify_fetch_and_launchable() -> None:
+    from runner.build import BuildError
+    from runner.errors import classify_build_or_launch
+    from runner.launch_plan import LaunchError
+
     err = classify_fetch(FetchError("git clone failed: Remote branch foo not found"))
     assert err.code == "ref_missing"
     with pytest.raises(ScanFailure) as raised:
         ensure_launchable("unknown", None)
     assert raised.value.code == "no_mcp_server"
     ensure_launchable("unknown", ["python", "server.py"])
+    ensure_launchable("unknown", None, manifests=["go.mod"])
+    launch = classify_build_or_launch(
+        LaunchError("no launch candidate spoke MCP initialize; tried: /bin/sh /app/toolpain_launch.sh")
+    )
+    assert launch.code == "launch_failed"
+    build = classify_build_or_launch(BuildError("docker build failed: boom"))
+    assert build.code == "build_failed"
+    mcpish = classify_build_or_launch(
+        BuildError("codegen could not make setup runnable: no launch candidate spoke MCP")
+    )
+    assert mcpish.code == "launch_failed"
 
 
 @pytest.mark.asyncio
 async def test_missing_ref_and_empty_tree_destroy_sandbox(tmp_path: Path) -> None:
     from runner.events import NullSink
     from runner.main import ScanConfig, run_scan_async
-    from runner.research import FakeLlm
+    from runner.research import FixtureLlm
 
     class Dummy:
         def __init__(self) -> None:
@@ -149,10 +165,10 @@ async def test_missing_ref_and_empty_tree_destroy_sandbox(tmp_path: Path) -> Non
         scan_id="s_empty",
         repo_url="https://github.com/a/b",
         local_path=empty,
-        sandbox="fake",
+        sandbox="demo",
     )
     with pytest.raises(ScanFailure) as raised:
-        await run_scan_async(cfg, sandbox=dummy, sink=sink, llm=FakeLlm())  # type: ignore[arg-type]
+        await run_scan_async(cfg, sandbox=dummy, sink=sink, llm=FixtureLlm())  # type: ignore[arg-type]
     assert raised.value.code == "no_mcp_server"
     assert dummy.stopped
     assert any(event["data"].get("code") == "no_mcp_server" for event in sink.events)
@@ -185,7 +201,7 @@ async def test_hung_tool_is_not_observed_and_scan_continues() -> None:
 
 
 @pytest.mark.asyncio
-async def test_guard_rejected_launch_falls_back(tmp_path: Path) -> None:
+async def test_guard_rejected_launch_no_heuristic_fallback(tmp_path: Path) -> None:
     from runner.codegen import generate_executable_code
     from runner.models import DiscoveredTool, DiscoveryResult
 
@@ -202,9 +218,11 @@ async def test_guard_rejected_launch_falls_back(tmp_path: Path) -> None:
         tools=[DiscoveredTool(name="add", description="add", sources=["R"], documented=True)]
     )
     generated = await generate_executable_code(discovery, BadLlm(), tmp_path)  # type: ignore[arg-type]
-    assert generated.source == "heuristic"
+    assert generated.source == "llm"
     assert generated.errors
-    assert "curl" not in generated.launch_sh
+    assert generated.launch_ok is False
+    assert generated.probe_ok is False
+    assert "curl" in generated.launch_sh  # rejected, not replaced by heuristic
 
 
 @pytest.mark.asyncio
@@ -236,17 +254,17 @@ async def test_http_list_only_validates(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_report_contract_cancel_and_costs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("TOOLPAIN_ADMIN_TOKEN", "admin-test")
 
     import control_plane.main as main_mod
     from control_plane.main import AppState, app
-    from control_plane.provisioner.fake import FakeProvisioner
+    from control_plane.provisioner.demo import DemoProvisioner
 
     state = AppState()
-    state.provisioner = FakeProvisioner(
+    state.provisioner = DemoProvisioner(
         emit_event=state.emit_event,
         save_report=state.save_report,
         update_scan=state.update_scan,
@@ -292,7 +310,8 @@ def test_report_contract_cancel_and_costs(tmp_path: Path, monkeypatch: pytest.Mo
         assert cert.status_code == 200
         assert scan_id in cert.text
         assert report["verdict"] in cert.text
-        assert costs["rate_card"] in cert.text
+        assert "not a warranty" in cert.text.lower()
+        assert "Rate card" not in cert.text
         pdf = client.get(f"/api/scans/{scan_id}/certificate.pdf")
         assert pdf.status_code == 200
         assert pdf.content.startswith(b"%PDF")
@@ -340,16 +359,16 @@ def test_report_contract_cancel_and_costs(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_compare_is_private_across_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("TOOLPAIN_ADMIN_TOKEN", "admin-test")
     import control_plane.main as main_mod
     from control_plane.main import AppState, app
-    from control_plane.provisioner.fake import FakeProvisioner
+    from control_plane.provisioner.demo import DemoProvisioner
 
     state = AppState()
-    state.provisioner = FakeProvisioner(
+    state.provisioner = DemoProvisioner(
         emit_event=state.emit_event,
         save_report=state.save_report,
         update_scan=state.update_scan,
@@ -415,8 +434,8 @@ def test_compare_is_private_across_tokens(tmp_path: Path, monkeypatch: pytest.Mo
 
 def test_llm_token_lookup_and_prod_admin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     from control_plane.main import AppState
 
     state = AppState()
@@ -440,8 +459,8 @@ def test_design_matches_web() -> None:
 
 def test_estimate_endpoint_uses_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     import control_plane.main as main_mod
     from control_plane.main import AppState, app
 

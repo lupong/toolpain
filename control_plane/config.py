@@ -36,13 +36,14 @@ class Settings:
     ollama_base_url: str
     ollama_model: str
     ollama_api_key: str
-    openai_api_key: str | None
-    openai_base_url: str
-    openai_model: str
+    codegen_model: str
     control_plane_url: str
     data_dir: Path
     scan_timeout_sec: int
     reaper_max_age_min: int
+    scanner_pool_enabled: bool
+    scanner_pool_size: int
+    scanner_pool_token: str | None
 
     @property
     def db_path(self) -> Path:
@@ -59,26 +60,51 @@ def get_settings() -> Settings:
         raise RuntimeError("TOOLPAIN_ADMIN_TOKEN is required when TOOLPAIN_ENV is prod or staging")
     root = Path(__file__).resolve().parents[1]
     data = Path(os.environ.get("TOOLPAIN_DATA_DIR", str(root / "data")))
+    # Production defaults to live Vultr Inference — never silently use fixtures.
+    default_llm = "live" if env_name in {"prod", "staging"} else "fixture"
+    default_prov = "vultr" if env_name in {"prod", "staging"} else "demo"
+    llm_mode = os.environ.get("LLM_MODE", default_llm).lower()
+    provisioner = os.environ.get("PROVISIONER", default_prov).lower()
+    if env_name in {"prod", "staging"}:
+        if llm_mode in {"fixture", "off"}:
+            raise RuntimeError(
+                f"TOOLPAIN_ENV={env_name} forbids LLM_MODE={llm_mode}; use live (Vultr Inference)"
+            )
+        if llm_mode == "live" and not (
+            os.environ.get("VULTR_INFERENCE_API_KEY") or ""
+        ).strip():
+            raise RuntimeError(
+                f"TOOLPAIN_ENV={env_name} with LLM_MODE=live requires VULTR_INFERENCE_API_KEY"
+            )
+        if provisioner == "demo":
+            raise RuntimeError(
+                f"TOOLPAIN_ENV={env_name} forbids PROVISIONER=demo; use vultr"
+            )
     return Settings(
-        provisioner=os.environ.get("PROVISIONER", "fake").lower(),
+        provisioner=provisioner,
         runtime=os.environ.get("RUNTIME", "runc").lower(),
-        llm_mode=os.environ.get("LLM_MODE", "fake").lower(),
+        llm_mode=llm_mode,
         vultr_api_key=os.environ.get("VULTR_API_KEY") or None,
         vultr_inference_api_key=os.environ.get("VULTR_INFERENCE_API_KEY") or None,
         vultr_inference_model=os.environ.get("VULTR_INFERENCE_MODEL") or None,
         vultr_inference_base_url=os.environ.get(
             "VULTR_INFERENCE_BASE_URL", "https://api.vultrinference.com/v1"
         ),
-        # Local Ollama (Cursor / on-machine). OpenAI-compatible /v1 endpoint.
+        # Local Ollama (/v1 chat completions). Offline laptop only — not production.
         ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.2:latest"),
         ollama_api_key=os.environ.get("OLLAMA_API_KEY", "ollama"),
-        # OpenAI cloud (or any OpenAI-compatible gateway).
-        openai_api_key=os.environ.get("OPENAI_API_KEY") or None,
-        openai_base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        openai_model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        codegen_model=(
+            os.environ.get("CODEGEN_MODEL", "").strip()
+            or os.environ.get("VULTR_INFERENCE_MODEL", "").strip()
+            or "deepseek-v4.1-flash-1017"
+        ),
         control_plane_url=os.environ.get("CONTROL_PLANE_URL", "http://127.0.0.1:8000"),
         data_dir=data,
         scan_timeout_sec=int(os.environ.get("SCAN_TIMEOUT_SEC", "1800")),
         reaper_max_age_min=int(os.environ.get("REAPER_MAX_AGE_MIN", "30")),
+        scanner_pool_enabled=os.environ.get("SCANNER_POOL_ENABLED", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        scanner_pool_size=int(os.environ.get("SCANNER_POOL_SIZE", "2")),
+        scanner_pool_token=os.environ.get("SCANNER_POOL_TOKEN") or None,
     )

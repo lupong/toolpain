@@ -68,3 +68,33 @@ def validate_launch_script(source: str) -> str:
     if not text.startswith("#!"):
         text = "#!/bin/sh\n" + text
     return text
+
+
+_SETUP_LINE = re.compile(r"^[A-Za-z0-9_./+=:@%-]+(?:\s+[A-Za-z0-9_./+=:@%-]+)*$")
+
+
+def validate_setup_script(source: str) -> str:
+    """A per-repo build script. One command per line, no shell operators.
+
+    The command name is not tied to a language. The sandbox runs the script as-is.
+    """
+    text = source.replace("\r\n", "\n").strip() + "\n"
+    if len(text) > 8_000:
+        raise ShellGuardError("setup script too large")
+    lower = text.lower()
+    for bad in FORBIDDEN_SUBSTR:
+        if bad in lower:
+            raise ShellGuardError(f"setup script contains forbidden pattern: {bad!r}")
+
+    lines = [ln for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if not lines or len(lines) > 40:
+        raise ShellGuardError("setup script must have 1–40 non-comment lines")
+    for ln in lines:
+        if not _SETUP_LINE.match(ln.strip()):
+            raise ShellGuardError(f"setup line not allowlisted: {ln!r}")
+        if any(part == ".." for tok in ln.split() for part in tok.split("/")):
+            raise ShellGuardError("setup path must stay inside the build")
+
+    if not text.startswith("#!"):
+        text = "#!/bin/sh\n" + text
+    return text

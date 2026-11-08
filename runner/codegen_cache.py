@@ -21,7 +21,7 @@ def cache_dir() -> Path:
 
 
 def make_key(*, repo_url: str, commit: str, brief: str | None, kind: str) -> str:
-    blob = f"{repo_url}|{commit}|{brief or ''}|{kind}|v3"
+    blob = f"{repo_url}|{commit}|{brief or ''}|{kind}|v4"
     return hashlib.sha256(blob.encode()).hexdigest()[:32]
 
 

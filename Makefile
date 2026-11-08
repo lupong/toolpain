@@ -1,23 +1,30 @@
 PYTHON ?= python3.12
 export PYTHONPATH := $(CURDIR)
 
-.PHONY: dev test lint demo install env-detect
+.PHONY: dev test lint demo install install-prod env-detect bake-help
 
+# Same recipe as Vultr scanner/control-plane installs (infra/install_toolpain.sh).
 install:
-	$(PYTHON) -m pip install -e ".[dev]"
+	TOOLPAIN_PYTHON=$(PYTHON) TOOLPAIN_INSTALL_DEV=1 bash infra/install_toolpain.sh "$(CURDIR)"
+
+install-prod:
+	TOOLPAIN_PYTHON=$(PYTHON) TOOLPAIN_INSTALL_DEV=0 bash infra/install_toolpain.sh "$(CURDIR)"
 
 env-detect:
 	@$(PYTHON) -c "from control_plane.env_detect import detect; print(detect())"
 
 dev:
-	$(PYTHON) -m uvicorn control_plane.main:app --reload --host 0.0.0.0 --port 8000
+	$(CURDIR)/.venv/bin/python -m uvicorn control_plane.main:app --reload --host 0.0.0.0 --port 8000
 
 test:
-	$(PYTHON) -m pytest -q
+	$(CURDIR)/.venv/bin/python -m pytest -q
 
 lint:
-	$(PYTHON) -m ruff check .
-	$(PYTHON) -m ruff format --check .
+	$(CURDIR)/.venv/bin/python -m ruff check .
+	$(CURDIR)/.venv/bin/python -m ruff format --check .
 
 demo:
-	$(PYTHON) -m runner.demo
+	$(CURDIR)/.venv/bin/python -m runner.demo
+
+bake-help:
+	@bash infra/build-snapshot.sh

@@ -66,18 +66,18 @@ async def test_vultr_create_poll_destroy() -> None:
 
 
 def test_byo_key_not_in_db_logs_or_sse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
 
     import control_plane.main as main_mod
     from control_plane.main import AppState, app
-    from control_plane.provisioner.fake import FakeProvisioner
+    from control_plane.provisioner.demo import DemoProvisioner
 
     secret = "vultr-byo-key-SHOULD-NOT-LEAK-0123456789abcdef"
 
     state = AppState()
-    state.provisioner = FakeProvisioner(
+    state.provisioner = DemoProvisioner(
         emit_event=state.emit_event,
         save_report=state.save_report,
         update_scan=state.update_scan,
@@ -116,7 +116,7 @@ def test_byo_key_not_in_db_logs_or_sse(tmp_path: Path, monkeypatch: pytest.Monke
             assert secret not in ev.msg
             assert secret not in str(ev.data)
 
-        # Memory-only store then cleared after fake run
+        # Memory-only store then cleared after demo run
         import time
 
         for _ in range(40):

@@ -1,15 +1,15 @@
-"""Provisioners: fake, local, vultr."""
+"""Provisioners: demo, local, vultr."""
 
 from __future__ import annotations
 
 from control_plane.provisioner.base import Provisioner
-from control_plane.provisioner.fake import FakeProvisioner
+from control_plane.provisioner.demo import DemoProvisioner
 
 
 def get_provisioner(name: str, **kwargs) -> Provisioner:
-    name = (name or "fake").lower()
-    if name == "fake":
-        return FakeProvisioner(**kwargs)
+    name = (name or "demo").lower()
+    if name == "demo":
+        return DemoProvisioner(**kwargs)
     if name == "local":
         from control_plane.provisioner.local import LocalProvisioner
 
@@ -21,4 +21,4 @@ def get_provisioner(name: str, **kwargs) -> Provisioner:
     raise ValueError(f"unknown provisioner: {name}")
 
 
-__all__ = ["Provisioner", "FakeProvisioner", "get_provisioner"]
+__all__ = ["Provisioner", "DemoProvisioner", "get_provisioner"]

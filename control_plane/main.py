@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
 import secrets
 import sys
+import tarfile
 import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,18 +25,43 @@ from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from control_plane.certificate import build_certificate, render_html, render_pdf
+from control_plane.certificate import (
+    build_certificate,
+    pdf_hash,
+    render_html,
+    render_pdf,
+    report_hash,
+)
+from control_plane.certificate_narrative import ensure_report_narrative
 from control_plane.cli import scan_main
 from control_plane.config import get_settings
 from control_plane.costs import FIXTURES, build_estimate, load_rate_card, price_actual
 from control_plane.db import Database
-from control_plane.failures import TERMINAL_STATUSES
+from control_plane.diagnostics import build_diagnostics, debug_bundle
+from control_plane.env_detect import detect
+from control_plane.failures import FAILURE_CODES, TERMINAL_STATUSES, terminal_update_from_event
+from control_plane.handoff import failure_note, ticket_note
+from control_plane.jsonlog import install_json_logs
+from control_plane.intake_inspect import inspect_repo
 from control_plane.llm import chat_json
-from control_plane.models import EventIn, EventOut, Report, ScanCreate, ScanSummary
+from control_plane.report_sanitize import sanitize_report
+from control_plane.models import (
+    EventIn,
+    EventOut,
+    IntakeInspectRequest,
+    IntakeInspectResponse,
+    Report,
+    ScanCreate,
+    ScanSummary,
+)
 from control_plane.provisioner import get_provisioner
 from control_plane.redaction import install_redaction, redact_text
 from control_plane.sample_report import DEMO_REPOS, report_for_demo
+from control_plane.scanner_pool import pool_from_settings
 from control_plane.share import compare_reports, share_expiry, sign_share, verify_share
+
+VERIFY_TTL_SEC = 365 * 24 * 60 * 60
+PRODUCT_VERSION = "0.5.0"
 
 log = logging.getLogger("toolpain")
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +96,11 @@ class AppState:
         self.settings.reports_dir.mkdir(parents=True, exist_ok=True)
         self.db = Database(self.settings.db_path)
         self.subscribers: dict[str, list[asyncio.Queue[dict[str, Any]]]] = {}
+        self.pool = pool_from_settings(
+            enabled=self.settings.scanner_pool_enabled,
+            size=self.settings.scanner_pool_size,
+            token=self.settings.scanner_pool_token,
+        )
         self.provisioner = get_provisioner(
             self.settings.provisioner,
             emit_event=self.emit_event,
@@ -77,6 +109,7 @@ class AppState:
             get_scan=self.db.get_scan,
             api_key=self.settings.vultr_api_key,
             control_plane_url=self.settings.control_plane_url,
+            pool=self.pool if self.settings.provisioner == "vultr" else None,
         )
 
     def emit_event(
@@ -89,6 +122,14 @@ class AppState:
     ) -> Any:
         safe_msg = redact_text(msg)
         safe_data = data or {}
+        log.info(
+            safe_msg,
+            extra={
+                "scan_id": scan_id,
+                "stage": stage,
+                "error_code": str(safe_data.get("code") or safe_data.get("error") or ""),
+            },
+        )
         event = self.db.add_event(scan_id, stage, level, safe_msg, safe_data)
         payload = event.model_dump(mode="json")
         for q in list(self.subscribers.get(scan_id, [])):
@@ -177,32 +218,93 @@ def require_scan_token(
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     install_redaction(log)
     logging.basicConfig(level=logging.INFO)
+    install_json_logs()
     log.info(
-        "ToolPain control plane starting provisioner=%s llm=%s",
+        "ToolPain control plane starting provisioner=%s llm=%s pool=%s",
         STATE.settings.provisioner,
         STATE.settings.llm_mode,
+        STATE.pool.snapshot(),
     )
     _seed_demos(STATE)
+    pool_task: asyncio.Task[None] | None = None
+    if (
+        STATE.settings.provisioner == "vultr"
+        and STATE.pool.enabled
+        and STATE.settings.vultr_api_key
+    ):
+        from control_plane.provisioner import vultr_ops
+
+        async def _ensure_pool() -> None:
+            try:
+                await vultr_ops.ensure_scanner_pool(STATE.provisioner)  # type: ignore[arg-type]
+            except Exception:  # noqa: BLE001
+                log.exception("scanner pool ensure failed")
+
+        pool_task = asyncio.create_task(_ensure_pool())
     yield
+    if pool_task is not None:
+        pool_task.cancel()
+        try:
+            await pool_task
+        except asyncio.CancelledError:
+            pass
 
 
-app = FastAPI(title="ToolPain", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="ToolPain", version=PRODUCT_VERSION, lifespan=lifespan)
 app.add_middleware(RateLimitMiddleware, limit=20, window_sec=60)
 
 
 @app.get("/api/health")
 def health(state: AppState = Depends(get_state)) -> dict[str, Any]:
-    from control_plane.env_detect import detect
-
     return {
         "ok": True,
         "env": detect().as_dict(),
         "provisioner": state.settings.provisioner,
         "llm_mode": state.settings.llm_mode,
         "codegen_mode": (os.environ.get("CODEGEN_MODE") or "llm").lower(),
-        "version": "0.4.0",
+        "codegen_model": state.settings.codegen_model,
+        "version": PRODUCT_VERSION,
         "supports": ["stdio", "http", "sse"],
+        "scanner_pool": state.pool.snapshot(),
     }
+
+
+@app.post("/internal/pool/heartbeat")
+async def pool_heartbeat(
+    body: dict[str, Any],
+    request: Request,
+    state: AppState = Depends(get_state),
+) -> dict[str, Any]:
+    """Warm-pool agents report idle/busy and receive scan assignments."""
+    presented = request.headers.get("X-Pool-Token")
+    if not state.pool.check_token(presented):
+        raise HTTPException(status_code=401, detail="invalid pool token")
+    instance_id = str(body.get("instance_id") or "").strip()
+    if not instance_id:
+        raise HTTPException(status_code=422, detail="instance_id required")
+    status = str(body.get("status") or "idle").strip().lower()
+    if status not in {"idle", "busy", "offline", "pending"}:
+        status = "idle"
+    return await state.pool.register_or_heartbeat(instance_id, status=status)
+
+
+@app.post("/api/intake/inspect", response_model=IntakeInspectResponse)
+async def intake_inspect(
+    body: IntakeInspectRequest,
+    state: AppState = Depends(get_state),
+) -> IntakeInspectResponse:
+    try:
+        inspection = await inspect_repo(
+            state.settings,
+            body.repo_url,
+            body.ref or "main",
+            with_message=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return IntakeInspectResponse(**inspection.as_dict())
 
 
 @app.post("/api/scans", response_model=ScanSummary, status_code=201)
@@ -220,11 +322,49 @@ async def create_scan(
         repo_url = DEMO_REPOS[demo]["repo_url"]
         ref = DEMO_REPOS[demo].get("ref", ref)
 
+    # Monorepo gate: require an explicit package path when multiple MCP servers exist.
+    # Demos and existing mcp_url targets skip this (no clone / package pick).
+    # GitHub inspect failures fail open so a flaky API does not block every scan.
+    if not demo and not body.mcp_url:
+        try:
+            inspection = await inspect_repo(
+                state.settings,
+                repo_url,
+                ref,
+                with_message=True,
+            )
+        except RuntimeError:
+            inspection = None
+        if inspection and inspection.multi and not body.prefer_subdir:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "monorepo_choice_required",
+                    "message": inspection.message
+                    or (
+                        f"This repository contains {inspection.count} MCP servers. "
+                        "Pick one server path to scan."
+                    ),
+                    "candidates": inspection.candidates,
+                    "count": inspection.count,
+                },
+            )
+
     scan_id = f"s_{uuid.uuid4().hex[:8]}"
     token = secrets.token_urlsafe(24)
     account_mode = "byo" if body.byo_vultr_key else "toolpain"
+    label = None
+    if x_api_token:
+        label = state.db.token_label(x_api_token)
     summary = state.db.create_scan(
-        scan_id, repo_url, ref, token, account_mode=account_mode, demo=demo
+        scan_id,
+        repo_url,
+        ref,
+        token,
+        account_mode=account_mode,
+        demo=demo,
+        ticket=body.ticket,
+        token_label=label or ("demo" if demo else None),
     )
     provisioner = (
         "vultr" if body.byo_vultr_key or state.settings.provisioner == "vultr" else "local"
@@ -245,8 +385,25 @@ async def create_scan(
         protocol=body.protocol,
         upstream_url=body.upstream_url,
         mcp_url=body.mcp_url,
+        use_pool=bool(body.use_pool),
     )
     return summary
+
+
+def _view_summary(state: AppState, scan: ScanSummary) -> ScanSummary:
+    """Overlay deflated verdict/findings for done scans (oracle/docs noise)."""
+    if scan.status != "done":
+        return scan
+    report = state.db.get_report(scan.id)
+    if not report:
+        return scan
+    view = sanitize_report(report)
+    return scan.model_copy(
+        update={
+            "verdict": view.get("verdict"),
+            "findings_count": len(view.get("findings") or []),
+        }
+    )
 
 
 @app.get("/api/scans", response_model=list[ScanSummary])
@@ -255,7 +412,7 @@ def list_scans(
     x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
 ) -> list[ScanSummary]:
     owner = state.db.hash_token(x_api_token) if x_api_token else None
-    return state.db.list_scans(owner_hash=owner)
+    return [_view_summary(state, s) for s in state.db.list_scans(owner_hash=owner)]
 
 
 @app.get("/api/scans/{scan_id}", response_model=ScanSummary)
@@ -263,7 +420,7 @@ def get_scan(scan_id: str, state: AppState = Depends(get_state)) -> ScanSummary:
     scan = state.db.get_scan(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="scan not found")
-    return scan
+    return _view_summary(state, scan)
 
 
 @app.get("/api/scans/{scan_id}/events")
@@ -348,7 +505,7 @@ def get_report(
     report = state.db.get_report(scan_id)
     if not report:
         raise HTTPException(status_code=404, detail="report not ready")
-    return report
+    return sanitize_report(report)
 
 
 @app.post("/api/scans/{scan_id}/share")
@@ -383,6 +540,7 @@ def shared_report(token: str, request: Request, state: AppState = Depends(get_st
     report = state.db.get_report(scan_id)
     if not report:
         raise HTTPException(status_code=404, detail="report not ready")
+    report = sanitize_report(report)
     exp = share_expiry(token)
     return JSONResponse(
         report,
@@ -391,17 +549,24 @@ def shared_report(token: str, request: Request, state: AppState = Depends(get_st
 
 
 @app.get("/share/{token}/certificate")
-def shared_certificate_html(token: str, state: AppState = Depends(get_state)) -> HTMLResponse:
-    return HTMLResponse(_certificate_html_for_share(token, state))
+async def shared_certificate_html(
+    token: str, request: Request, state: AppState = Depends(get_state)
+) -> HTMLResponse:
+    return HTMLResponse(await _certificate_html_for_share(token, state, _base_url(request)))
 
 
 @app.get("/share/{token}/certificate.pdf")
-def shared_certificate_pdf(token: str, state: AppState = Depends(get_state)) -> Response:
+async def shared_certificate_pdf(
+    token: str, request: Request, state: AppState = Depends(get_state)
+) -> Response:
     scan_id = verify_share(token)
     if not scan_id:
         raise HTTPException(status_code=404, detail="share link invalid or expired")
-    cert = _certificate_model(state, scan_id, token=None, via_share=True)
+    cert = await _certificate_model(
+        state, scan_id, token=None, via_share=True, base_url=_base_url(request)
+    )
     pdf = render_pdf(cert)
+    state.db.seal_certificate(scan_id, cert["report_sha256"], pdf_hash(pdf))
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -463,6 +628,36 @@ async def cancel_scan(scan_id: str, state: AppState = Depends(get_state)) -> dic
     return {"status": "cancelled"}
 
 
+@app.get("/internal/scans/{scan_id}/runner-sync.tgz")
+def runner_sync_tarball(
+    scan_id: str,
+    _: str = Depends(require_scan_token),
+    state: AppState = Depends(get_state),
+) -> Response:
+    """Ship CP ``runner/`` + ``sandbox/`` Python to scanners (avoids rebake for hotfixes)."""
+    if not state.db.get_scan(scan_id):
+        raise HTTPException(status_code=404, detail="scan not found")
+
+    root = Path(__file__).resolve().parents[1]
+    packages = [root / "runner", root / "sandbox"]
+    if not (root / "runner").is_dir():
+        raise HTTPException(status_code=404, detail="runner package missing")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for pkg in packages:
+            if not pkg.is_dir():
+                continue
+            for path in sorted(pkg.rglob("*.py")):
+                if "__pycache__" in path.parts:
+                    continue
+                tar.add(path, arcname=str(path.relative_to(root)))
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/gzip",
+        headers={"Content-Disposition": "attachment; filename=runner-sync.tgz"},
+    )
+
+
 @app.post("/internal/scans/{scan_id}/events", status_code=201)
 def internal_event(
     scan_id: str,
@@ -470,9 +665,15 @@ def internal_event(
     _: str = Depends(require_scan_token),
     state: AppState = Depends(get_state),
 ) -> dict[str, Any]:
-    if not state.db.get_scan(scan_id):
+    scan = state.db.get_scan(scan_id)
+    if not scan:
         raise HTTPException(status_code=404, detail="scan not found")
     ev = state.emit_event(scan_id, body.stage, body.level, body.msg, body.data)
+    # Failure/destroy without a success report must leave ``running`` so SSE ``done`` fires.
+    if scan.status not in TERMINAL_STATUSES:
+        finish = terminal_update_from_event(stage=body.stage, msg=body.msg, data=body.data)
+        if finish:
+            state.update_scan(scan_id, **finish)
     return {"id": ev.id}
 
 
@@ -528,13 +729,22 @@ async def internal_llm(
     scan_id = state.db.scan_id_for_token(x_scan_token)
     if not scan_id:
         raise HTTPException(status_code=401, detail="invalid scan token")
+    if state.settings.llm_mode in {"fixture", "off"}:
+        raise HTTPException(
+            status_code=503,
+            detail="control plane LLM_MODE is fixture; scanners require live (or ollama locally)",
+        )
     kind_hint = str(body.get("kind") or body.get("schema_hint") or "")
     state.db.record_llm_call(scan_id, "research" if "research" in kind_hint else "codegen")
-    return await chat_json(
-        state.settings,
-        body.get("messages") or [],
-        schema_hint=body.get("schema_hint"),
-    )
+    try:
+        return await chat_json(
+            state.settings,
+            body.get("messages") or [],
+            schema_hint=body.get("schema_hint"),
+        )
+    except RuntimeError as exc:
+        # Missing inference key / unresolved backend — surface as 503, not an uncaught 500.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _failure_from_events(state: AppState, scan_id: str) -> tuple[str | None, str | None]:
@@ -593,8 +803,23 @@ def _can_read(state: AppState, scan_id: str, token: str | None) -> bool:
     return state.db.hash_token(token or "") == owner
 
 
-def _certificate_model(
-    state: AppState, scan_id: str, token: str | None, *, via_share: bool
+def _base_url(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+def _require_admin(token: str | None) -> None:
+    expected = os.environ.get("TOOLPAIN_ADMIN_TOKEN") or "toolpain-dev-admin"
+    if not token or token != expected:
+        raise HTTPException(status_code=403, detail="admin token required")
+
+
+async def _certificate_model(
+    state: AppState,
+    scan_id: str,
+    token: str | None,
+    *,
+    via_share: bool,
+    base_url: str,
 ) -> dict[str, Any]:
     scan = state.db.get_scan(scan_id)
     if not scan:
@@ -605,25 +830,37 @@ def _certificate_model(
         raise HTTPException(
             status_code=409, detail="certificate is available when the scan is done"
         )
-    report = state.db.get_report(scan_id)
-    if not report:
+    sealed = state.db.get_report(scan_id)
+    if not sealed:
         raise HTTPException(status_code=404, detail="report not ready")
-    return build_certificate(
+    # LLM narrative is generated from the deflated view; seal hash stays on disk bytes.
+    view = sanitize_report(sealed)
+    view = await ensure_report_narrative(state.settings, view)
+    share, _exp = sign_share(scan_id, ttl_sec=VERIFY_TTL_SEC)
+    cert = build_certificate(
         scan.id,
         repo_url=scan.repo_url,
         ref=scan.ref,
         created_at=scan.created_at,
         updated_at=scan.updated_at,
         account_mode=scan.account_mode,
-        report=report,
+        report=view,
+        seal_report=sealed,
+        ticket=scan.ticket,
+        scanned_by=scan.token_label or scan.account_mode,
+        verify_url=f"{base_url}/verify/{share}",
     )
+    state.db.seal_certificate(scan_id, cert["report_sha256"])
+    return cert
 
 
-def _certificate_html_for_share(token: str, state: AppState) -> str:
+async def _certificate_html_for_share(token: str, state: AppState, base_url: str) -> str:
     scan_id = verify_share(token)
     if not scan_id:
         raise HTTPException(status_code=404, detail="share link invalid or expired")
-    return render_html(_certificate_model(state, scan_id, None, via_share=True))
+    return render_html(
+        await _certificate_model(state, scan_id, None, via_share=True, base_url=base_url)
+    )
 
 
 @app.post("/api/estimate")
@@ -638,23 +875,30 @@ def estimate(body: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.get("/api/scans/{scan_id}/certificate")
-def certificate_html(
+async def certificate_html(
     scan_id: str,
+    request: Request,
     state: AppState = Depends(get_state),
     x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
 ) -> HTMLResponse:
-    cert = _certificate_model(state, scan_id, x_api_token, via_share=False)
+    cert = await _certificate_model(
+        state, scan_id, x_api_token, via_share=False, base_url=_base_url(request)
+    )
     return HTMLResponse(render_html(cert))
 
 
 @app.get("/api/scans/{scan_id}/certificate.pdf")
-def certificate_pdf(
+async def certificate_pdf(
     scan_id: str,
+    request: Request,
     state: AppState = Depends(get_state),
     x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
 ) -> Response:
-    cert = _certificate_model(state, scan_id, x_api_token, via_share=False)
+    cert = await _certificate_model(
+        state, scan_id, x_api_token, via_share=False, base_url=_base_url(request)
+    )
     pdf = render_pdf(cert)
+    state.db.seal_certificate(scan_id, cert["report_sha256"], pdf_hash(pdf))
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -662,41 +906,219 @@ def certificate_pdf(
     )
 
 
+@app.post("/api/scans/{scan_id}/verify-link")
+def verify_link(
+    scan_id: str,
+    request: Request,
+    state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
+) -> dict[str, Any]:
+    scan = state.db.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="scan not found")
+    if not _can_read(state, scan_id, x_api_token):
+        raise HTTPException(status_code=403, detail="private report")
+    token, exp = sign_share(scan_id, ttl_sec=VERIFY_TTL_SEC)
+    url = f"{_base_url(request)}/verify/{token}"
+    report = state.db.get_report(scan_id)
+    if scan.status == "done" and report:
+        digest = report_hash(report)
+        note = ticket_note(scan, report, verify_url=url, report_sha256=digest)
+    else:
+        events = state.db.list_events(scan_id)
+        stage = next(
+            (
+                ev.stage
+                for ev in reversed(events)
+                if (ev.data or {}).get("code") or (ev.data or {}).get("error")
+            ),
+            None,
+        )
+        digest = ""
+        note = failure_note(scan, stage=str(stage) if stage else None, detail=scan.error_detail)
+    return {"token": token, "expires_at": exp, "url": url, "note": note, "report_sha256": digest}
+
+
+@app.get("/api/scans/{scan_id}/diagnostics")
+def scan_diagnostics(
+    scan_id: str,
+    state: AppState = Depends(get_state),
+    x_api_token: str | None = Header(default=None, alias="X-Api-Token"),
+) -> dict[str, Any]:
+    scan = state.db.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="scan not found")
+    if not _can_read(state, scan_id, x_api_token):
+        raise HTTPException(status_code=403, detail="private report")
+    return build_diagnostics(
+        scan,
+        state.db.list_events(scan_id),
+        state.db.get_report(scan_id),
+        state.db.llm_call_counts(scan_id),
+    )
+
+
+@app.get("/api/scans/{scan_id}/debug.zip")
+def scan_debug_bundle(
+    scan_id: str,
+    state: AppState = Depends(get_state),
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+) -> Response:
+    _require_admin(x_admin_token)
+    scan = state.db.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="scan not found")
+    events = state.db.list_events(scan_id)
+    report = state.db.get_report(scan_id)
+    diagnostics = build_diagnostics(scan, events, report, state.db.llm_call_counts(scan_id))
+    body = debug_bundle(scan, events, report, diagnostics)
+    return Response(
+        content=body,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="toolpain-{scan_id}-debug.zip"'},
+    )
+
+
+def _system_payload(state: AppState) -> dict[str, Any]:
+    counts = state.db.status_counts()
+    since = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    return {
+        "version": PRODUCT_VERSION,
+        "commit": os.environ.get("TOOLPAIN_COMMIT") or "unknown",
+        "provisioner": state.settings.provisioner,
+        "runtime": detect().as_dict(),
+        "llm_mode": state.settings.llm_mode,
+        "codegen_mode": (os.environ.get("CODEGEN_MODE") or "llm").lower(),
+        "codegen_model": state.settings.codegen_model,
+        "queue_depth": counts.get("queued", 0),
+        "running": counts.get("running", 0),
+        "reaper_last_run": None,
+        "failed_24h": state.db.failed_since(since),
+        "scans_by_status": counts,
+        "error_codes": sorted(FAILURE_CODES),
+    }
+
+
+@app.get("/api/system")
+def system_status(
+    state: AppState = Depends(get_state),
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+) -> dict[str, Any]:
+    _require_admin(x_admin_token)
+    return _system_payload(state)
+
+
+@app.get("/metrics")
+def metrics(
+    state: AppState = Depends(get_state),
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+) -> Response:
+    _require_admin(x_admin_token)
+    lines = [
+        f'toolpain_scans{{status="{status}"}} {count}'
+        for status, count in sorted(state.db.status_counts().items())
+    ]
+    return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
+@app.api_route("/verify/{token}", methods=["GET", "POST"])
+async def verify_page(
+    token: str, request: Request, state: AppState = Depends(get_state)
+) -> HTMLResponse:
+    scan_id = verify_share(token)
+    if not scan_id:
+        raise HTTPException(status_code=404, detail="share link invalid or expired")
+    scan = state.db.get_scan(scan_id)
+    report = state.db.get_report(scan_id) if scan else None
+    if not scan or scan.status != "done" or not report:
+        raise HTTPException(status_code=404, detail="report not ready")
+    current = report_hash(report)
+    sealed, pdf_sealed = state.db.certificate_seal(scan_id)
+    if not sealed:
+        state.db.seal_certificate(scan_id, current)
+        sealed = current
+    report_ok = sealed == current
+    pdf_message = ""
+    pdf_ok = True
+    pdf_checked = False
+    if request.method == "POST":
+        form = await request.form()
+        upload = form.get("pdf")
+        pdf_checked = True
+        if upload is None or not hasattr(upload, "read"):
+            pdf_message = "No PDF was uploaded"
+            pdf_ok = False
+        else:
+            data = await upload.read()
+            digest = pdf_hash(data)
+            if not pdf_sealed:
+                pdf_message = "No certificate file is on record yet"
+                pdf_ok = False
+            elif digest == pdf_sealed:
+                pdf_message = "Uploaded PDF matches the certificate"
+                pdf_ok = True
+            else:
+                pdf_message = "Uploaded PDF does not match the certificate"
+                pdf_ok = False
+    parts = ["Matches the stored report" if report_ok else "Does not match the stored report"]
+    if pdf_message:
+        parts.append(pdf_message)
+    exp = share_expiry(token)
+    if exp:
+        parts.append(f"Link expires {datetime.fromtimestamp(exp, UTC).date().isoformat()}")
+    cert = await _certificate_model(
+        state, scan_id, None, via_share=True, base_url=_base_url(request)
+    )
+    html = render_html(
+        cert,
+        banner=". ".join(parts),
+        banner_ok=report_ok and (pdf_ok if pdf_checked else True),
+    )
+    form_html = (
+        '<form class="sheet" method="post" enctype="multipart/form-data">'
+        "<h2>Check a PDF from the ticket</h2>"
+        '<input type="file" name="pdf" accept="application/pdf" required>'
+        '<button type="submit">Check PDF</button></form>'
+    )
+    return HTMLResponse(html.replace("</article>", "</article>" + form_html))
+
+
 # Static web UI
 if WEB.exists():
     app.mount("/assets", StaticFiles(directory=WEB), name="assets")
 
 
-@app.get("/")
-def index() -> FileResponse:
-    path = WEB / "index.html"
+def _web_or_design(name: str) -> FileResponse:
+    path = WEB / name
     if not path.exists():
-        return FileResponse(ROOT / "design" / "index.html")
+        return FileResponse(ROOT / "design" / name)
     return FileResponse(path)
+
+
+@app.get("/")
+@app.get("/index.html")
+def index() -> FileResponse:
+    return _web_or_design("index.html")
 
 
 @app.get("/scan.html")
 def scan_page() -> FileResponse:
-    path = WEB / "scan.html"
-    if not path.exists():
-        return FileResponse(ROOT / "design" / "scan.html")
-    return FileResponse(path)
+    return _web_or_design("scan.html")
 
 
 @app.get("/style.css")
 def style() -> FileResponse:
-    path = WEB / "style.css"
-    if not path.exists():
-        return FileResponse(ROOT / "design" / "style.css")
-    return FileResponse(path)
+    return _web_or_design("style.css")
+
+
+@app.get("/system.html")
+def system_page() -> FileResponse:
+    return _web_or_design("system.html")
 
 
 @app.get("/app.js")
 def app_js() -> FileResponse:
-    path = WEB / "app.js"
-    if not path.exists():
-        return FileResponse(ROOT / "design" / "app.js")
-    return FileResponse(path)
+    return _web_or_design("app.js")
 
 
 @app.exception_handler(ValidationError)

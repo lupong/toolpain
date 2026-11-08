@@ -1,0 +1,17 @@
+# The room a scan runs in. No language runtime is installed.
+# Codegen's setup script apt-gets the toolchain and builds the repo.
+# Trixie, so apt-get can install a current toolchain. Bookworm's Node package is 18.
+# toolpain-install-go fetches a go.dev toolchain when go.mod needs newer than apt.
+FROM debian:trixie-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        strace \
+        build-essential \
+        make \
+    && rm -rf /var/lib/apt/lists/*
+COPY toolpain-install-go /usr/local/bin/toolpain-install-go
+RUN chmod 755 /usr/local/bin/toolpain-install-go
+WORKDIR /app

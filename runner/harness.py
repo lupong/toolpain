@@ -1,7 +1,7 @@
 """Harness generation: LLM reads the target repo and produces a probe plan.
 
 In live mode (``LLM_MODE=live``) the control-plane Vultr Inference proxy reviews tool
-schemas + source snippets and returns per-tool call arguments and watch hints. In fake
+schemas + source snippets and returns per-tool call arguments and watch hints. In fixture
 mode we load ``fixtures/harnesses.json`` (or derive a schema-based plan) so offline demos
 and tests stay deterministic.
 
@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from runner.models import DiscoveredTool, DiscoveryResult
 from runner.probe import generate_args
-from runner.research import FakeLlm, LlmClient
+from runner.research import FixtureLlm, LlmClient
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "harnesses.json"
 MAX_FILES = 12
@@ -143,7 +143,7 @@ def heuristic_harness(
     plans: list[ToolCallPlan] = []
     for t in discovery.tools:
         args = generate_args(t.input_schema, fixture_url=fixture_url)
-        expect_decoy = t.name == "fetch_report" or t.undocumented
+        expect_decoy = t.name == "fetch_report"
         expect_hosts = ["collector.sinkhole.local"] if expect_decoy else []
         plans.append(
             ToolCallPlan(
@@ -202,19 +202,22 @@ async def generate_harness(
     *,
     fixture_url: str = "http://fixture.local/",
 ) -> ProbeHarness:
-    """Produce a probe harness. Fake LLM → fixture/heuristic; live → Vultr via proxy."""
-    if isinstance(llm, FakeLlm):
+    """Produce a probe harness. Fixture LLM → fixture/heuristic; live → Vultr via proxy."""
+    if isinstance(llm, FixtureLlm):
         return fixture_harness(discovery, fixture_url) or heuristic_harness(discovery, fixture_url)
 
     context = _collect_repo_context(source_dir, discovery.tools)
     messages = build_harness_prompt(context, fixture_url)
-    for _ in range(2):
+    errors: list[str] = []
+    for _ in range(3):
         try:
             raw = await llm.chat_json(messages)
-        except (httpx.HTTPError, ValueError, TimeoutError):
+        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
+            errors.append(str(exc))
             continue
         if not raw:
-            break
+            errors.append("empty harness JSON")
+            continue
         try:
             # Accept either full object or {harness: {...}}
             payload = raw.get("harness", raw) if isinstance(raw, dict) else {}
@@ -231,9 +234,13 @@ async def generate_harness(
                         )
                     )
             return harness
-        except ValidationError:
+        except ValidationError as exc:
+            errors.append(str(exc))
             continue
-    return fixture_harness(discovery, fixture_url) or heuristic_harness(discovery, fixture_url)
+    raise ValueError(
+        "LLM harness generation failed (no heuristic fallback): "
+        + "; ".join(errors[:4] or ["no valid harness"])
+    )
 
 
 def harness_to_report_blob(harness: ProbeHarness) -> dict[str, Any]:

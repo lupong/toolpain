@@ -19,7 +19,20 @@ def _failure_kind(exc: BaseException) -> tuple[str, str]:
     name = type(exc).__name__
     if "401" in msg or "api key" in msg or "unauthorized" in msg:
         return "key", "provision"
-    if name == "BuildError" or "docker build" in msg or "npm" in msg:
+    if (
+        "curl or wget" in msg
+        or "ebadengine" in msg
+        or "failed to download version index" in msg
+        or "unsupported engine" in msg
+    ):
+        return "toolchain", "build"
+    if (
+        name == "BuildError"
+        or "docker build" in msg
+        or "npm" in msg
+        or "codegen could not" in msg
+        or "forbidden pattern" in msg
+    ):
         return "build", "build"
     if name == "FetchError":
         if "unsupported repo url" in msg or "invalid git ref" in msg:
@@ -158,7 +171,12 @@ class LocalProvisioner(Provisioner):
                 if asyncio.iscoroutine(result):
                     await result
             if self._update_scan:
-                result = self._update_scan(scan_id, status="failed")
+                result = self._update_scan(
+                    scan_id,
+                    status="failed",
+                    error_code=kind,
+                    error_detail=str(exc)[:500],
+                )
                 if asyncio.iscoroutine(result):
                     await result
         finally:

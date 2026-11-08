@@ -43,6 +43,12 @@ def find_discrepancies(
     upstream_tools: list[str] | None = None,
 ) -> list[Discrepancy]:
     out: list[Discrepancy] = []
+    runtimeish = sum(1 for t in discovery.tools if set(t.sources) & {"S", "R", "F"})
+    ghosts = sum(
+        1 for t in discovery.tools if t.documented and not (set(t.sources) & {"S", "R", "F"})
+    )
+    # A long README catalog of names the runtime never exposes is noise.
+    report_documented_missing = ghosts <= max(3, runtimeish // 4)
     for tool in discovery.tools:
         tier = assessments[tool.name].tier if tool.name in assessments else "low"
         if tool.undocumented:
@@ -52,7 +58,7 @@ def find_discrepancies(
                     tool=tool.name,
                     severity="high" if tier in {"critical", "high"} else "medium",
                     title=f"`{tool.name}` is not documented",
-                    detail=f"Seen via {'/'.join(tool.sources)} but absent from the README.",
+                    detail=f"Seen via {'/'.join(tool.sources)} but absent from the docs.",
                     file=tool.file,
                 )
             )
@@ -67,7 +73,11 @@ def find_discrepancies(
                     file=tool.file,
                 )
             )
-        if tool.documented and not (set(tool.sources) & {"S", "R", "F"}):
+        if (
+            report_documented_missing
+            and tool.documented
+            and not (set(tool.sources) & {"S", "R", "F"})
+        ):
             out.append(
                 Discrepancy(
                     kind="documented_missing",
@@ -79,16 +89,18 @@ def find_discrepancies(
         assessment = assessments.get(tool.name)
         if assessment and assessment.exceeds and tool.sources:
             severe = {"credential_read", "file_read", "file_write", "shell", "subprocess"}
+            exceeds = list(assessment.exceeds)
+            detail = (
+                f"Claimed: {', '.join(assessment.claimed) or 'nothing notable'}. "
+                f"Observed beyond that: {', '.join(exceeds)}."
+            )
             out.append(
                 Discrepancy(
                     kind="description_mismatch",
                     tool=tool.name,
                     severity="high" if severe & set(assessment.exceeds) else "medium",
                     title=f"`{tool.name}` does more than it claims",
-                    detail=(
-                        f"Claimed: {', '.join(assessment.claimed) or 'nothing notable'}. "
-                        f"Observed beyond that: {', '.join(assessment.exceeds)}."
-                    ),
+                    detail=detail,
                     file=tool.file,
                 )
             )

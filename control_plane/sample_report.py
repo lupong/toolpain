@@ -1,4 +1,4 @@
-"""Part 1.7 sample report used by FakeProvisioner and seeded demos."""
+"""Part 1.7 sample report used by DemoProvisioner and seeded demos."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def sample_report(
         return filesystem_report(scan_id, repo_url)
     if demo == "playwright-mcp":
         return over_privileged_report(scan_id, repo_url)
-    repo = repo_url or "https://github.com/andrew/playwright-mcp"
+    repo = repo_url or "https://github.com/microsoft/playwright-mcp"
     return {
         "scan_id": scan_id,
         "repo": {
@@ -30,9 +30,9 @@ def sample_report(
         },
         "verdict": "flagged",
         "stats": {
-            "tools": 27,
+            "tools": 6,
             "undocumented": 1,
-            "critical_tier": 3,
+            "critical_tier": 2,
             "toxic_combos": 4,
             "egress_attempted": 2,
             "decoy_reads": 1,
@@ -437,7 +437,7 @@ def over_privileged_report(scan_id: str, repo_url: str | None = None) -> dict[st
 
 
 def report_for_demo(demo: str | None, scan_id: str, repo_url: str | None = None) -> dict[str, Any]:
-    """Pick the seeded/fake report that matches the demo's verdict."""
+    """Pick the seeded demo report that matches the demo's verdict."""
     return sample_report(scan_id, repo_url, demo=demo)
 
 

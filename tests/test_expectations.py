@@ -39,3 +39,18 @@ def test_score_expect_decoy_hit_and_miss() -> None:
         )
     )
     assert misses and misses[0]["type"] == "expectation_miss"
+
+
+def test_fixture_local_expect_host_is_not_a_finding() -> None:
+    harness = ProbeHarness(
+        plans=[
+            ToolCallPlan(
+                tool="Area",
+                arguments={"url": "http://fixture.local/x"},
+                expect_hosts=["fixture.local"],
+            )
+        ]
+    )
+    results = score_expectations(harness, {"Area": ProbeResult(tool="Area", ok=True)})
+    assert results == []
+    assert expectation_findings(results) == []

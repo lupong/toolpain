@@ -215,6 +215,10 @@ def summarize(
             continue  # DNS lookups are captured via sinkhole dns records
         if e.addr == sandbox.sinkhole_ip:
             continue  # host resolved through sinkhole records above
+        fixture_ip = getattr(sandbox, "fixture_ip", None)
+        if fixture_ip and e.addr == fixture_ip:
+            network.append(f"fixture.local:{e.port}" if e.port else "fixture.local")
+            continue  # the probe's own fixture host, not undeclared egress
         hosts.append(e.addr)  # IP-literal egress: no route, but the attempt is visible
         network.append(f"{e.addr}:{e.port}" if e.port else e.addr)
     all_hosts = list(dict.fromkeys(hosts))

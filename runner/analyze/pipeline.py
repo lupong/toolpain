@@ -37,11 +37,16 @@ class AnalysisResult(BaseModel):
 
 def analyze_scan(data: AnalysisInput) -> AnalysisResult:
     tools = data.discovery.tools
+    egress = analyze_egress(data.probes, data.readme_text)
     assessments = {
-        t.name: assess_privilege(t, data.profiles.get(t.name), data.probes.get(t.name))
+        t.name: assess_privilege(
+            t,
+            data.profiles.get(t.name),
+            data.probes.get(t.name),
+            declared_hosts=egress.declared,
+        )
         for t in tools
     }
-    egress = analyze_egress(data.probes, data.readme_text)
     return AnalysisResult(
         assessments=assessments,
         discrepancies=find_discrepancies(data.discovery, assessments, data.upstream_tools),

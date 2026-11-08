@@ -19,6 +19,7 @@ dependencies = [
   "python-multipart>=0.0.12",
   "sse-starlette>=2.1.0",
   "fpdf2>=2.8.0",
+  "segno>=1.6.0",
 ]
 
 [project.optional-dependencies]

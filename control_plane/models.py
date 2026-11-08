@@ -35,6 +35,28 @@ ToolVerdict = Literal["confirmed", "exceeds_claim", "not_observed", "flagged"]
 Severity = Literal["critical", "high", "medium", "low", "info"]
 
 
+class IntakeInspectRequest(BaseModel):
+    repo_url: str
+    ref: str = "main"
+
+    @field_validator("repo_url")
+    @classmethod
+    def validate_github_url(cls, v: str) -> str:
+        v = v.strip().rstrip("/")
+        if not GITHUB_URL_RE.match(v):
+            raise ValueError("repo_url must be https://github.com/<owner>/<repo>")
+        return v
+
+
+class IntakeInspectResponse(BaseModel):
+    repo_url: str
+    ref: str
+    multi: bool
+    count: int
+    candidates: list[str]
+    message: str | None = None
+
+
 class ScanCreate(BaseModel):
     repo_url: str
     ref: str = "main"
@@ -45,6 +67,9 @@ class ScanCreate(BaseModel):
     protocol: Literal["auto", "stdio", "http", "sse"] = "auto"
     upstream_url: str | None = None
     mcp_url: str | None = None  # existing HTTP/SSE MCP endpoint (no host egress beyond this URL)
+    ticket: str | None = None  # ITSM ticket id, printed on the certificate
+    # Opt-in per scan. Off by default — create a fresh VM unless the user asks for pool.
+    use_pool: bool = False
 
     @field_validator("repo_url")
     @classmethod
@@ -124,6 +149,16 @@ class ScanCreate(BaseModel):
             raise ValueError("mcp_url must not be a private or link-local address")
         return v
 
+    @field_validator("ticket")
+    @classmethod
+    def validate_ticket(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        text = "".join(ch for ch in str(v) if ch.isalnum() or ch in "-_").strip()
+        if not text:
+            return None
+        return text[:64]
+
 
 class ScanSummary(BaseModel):
     id: str
@@ -138,6 +173,8 @@ class ScanSummary(BaseModel):
     demo: str | None = None
     error_code: str | None = None
     error_detail: str | None = None
+    ticket: str | None = None
+    token_label: str | None = None
 
 
 class EventIn(BaseModel):
@@ -229,3 +266,5 @@ class Report(BaseModel):
     upstream: dict[str, Any] | None = None
     cache: dict[str, Any] | None = None
     runtime: str | None = None
+    # LLM-written certificate copy (business use case + ranked next steps)
+    certificate: dict[str, Any] | None = None

@@ -14,7 +14,7 @@ from runner.codegen import (
     sanitize_scan_brief,
 )
 from runner.models import DiscoveryResult
-from runner.research import FakeLlm
+from runner.research import FixtureLlm
 from runner.shell_guard import ShellGuardError, validate_launch_script
 
 
@@ -31,13 +31,30 @@ def test_hostile_probe_rejected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_codegen_mode_forces_heuristic(
+async def test_fixture_llm_uses_heuristic_templates(tmp_path: Path) -> None:
+    code = await generate_executable_code(DiscoveryResult(server_name="x"), FixtureLlm(), tmp_path)
+    assert code.source == "heuristic"
+
+
+@pytest.mark.asyncio
+async def test_codegen_mode_heuristic_ignored_for_live_client(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """CODEGEN_MODE=heuristic must not unlock template artifacts on a live client."""
+
+    class _BoomLlm:
+        async def chat_json(self, messages):  # noqa: ANN001, ARG002
+            raise ValueError("live client must be called")
+
     monkeypatch.setenv("CODEGEN_MODE", "heuristic")
-    # Even with a non-Fake client shape, FakeLlm path is used via forced heuristic.
-    code = await generate_executable_code(DiscoveryResult(server_name="x"), FakeLlm(), tmp_path)
-    assert code.source == "heuristic"
+    code = await generate_executable_code(
+        DiscoveryResult(server_name="x"),
+        _BoomLlm(),  # type: ignore[arg-type]
+        tmp_path,
+    )
+    assert code.source == "llm"
+    assert not code.launch_ok
+    assert any("live client must be called" in e for e in code.errors)
 
 
 def test_brief_redacts_keys() -> None:
@@ -77,7 +94,7 @@ async def test_workdir_pick_respects_brief_pool(tmp_path: Path) -> None:
     pick = await generate_workdir_pick(
         tmp_path,
         ["src/time", "src/fetch"],
-        FakeLlm(),
+        FixtureLlm(),
         scan_brief="prefer the time MCP package",
     )
     assert pick.ok and pick.subdir in {"src/time", "src/fetch"}

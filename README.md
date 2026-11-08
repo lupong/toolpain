@@ -2,108 +2,68 @@
 
 **Find the tools that hurt before they hurt you.**
 
-Every MCP tool, proven at runtime. Nothing leaves the sandbox.
+ToolPain is a **security harness for MCP servers**. Paste a GitHub link; ToolPain runs an **agentic scan on Vultr**: ephemeral compute, Vultr Inference (Qwen) reviews the repo and generates bootstrap/probe programs, the harness executes them in isolation, and you get a runtime proof of what each tool really does versus what it claims.
 
-ToolPain is a security scanner for AI agent tools. Paste a GitHub link to an MCP server (for example a fork of `microsoft/playwright-mcp`). ToolPain launches a throwaway, locked-down environment, runs the server **with no internet**, calls every tool, and reports what each tool *really* does versus what it claims: undocumented tools, over-privileged tools, toxic combinations, downstream services, ingress/egress needs, and any attempt to read a planted decoy or reach an undeclared host — all caught inside the sandbox.
+Nothing in production depends on scanning on your laptop. **Vultr is the substrate** — VMs, snapshots, and Serverless Inference.
 
 ```
-┌─────────────┐     SSE/API      ┌────────────────┐
-│  web/ UI    │◄────────────────►│ control_plane  │  Vultr Inference proxy
-└─────────────┘                  │  FastAPI+SQLite│  BYO key (memory only)
-                                 └───────┬────────┘
-                                         │ provision
-                    ┌────────────────────▼────────────────────┐
-                    │  ephemeral sandbox (Docker internal net)│
-                    │  sinkhole DNS/HTTP/TLS · decoys · strace│
-                    │  runner: fetch→build→isolate→discover→  │
-                    │           research→probe→analyze→report │
-                    └─────────────────────────────────────────┘
+Browser → Control plane (Vultr VM)
+                │
+                ├─ Vultr API → ephemeral scanner VM
+                │                  └─ Docker sandbox · sinkhole · strace
+                │
+                └─ Vultr Inference (Qwen + research models)
+                       └─ setup / launch / probe / report narrative
 ```
 
-## Quick start (3-minute demo)
+## What you get
+
+- Runtime evidence for every MCP tool (files, network, processes)
+- Undocumented tools, over-privilege, toxic combos, decoy traps, undeclared egress
+- IT-facing findings + downloadable **scan certificate**
+- Least-privilege allowlist to paste into your agent config
+
+## Docs
+
+| Doc | Purpose |
+|-----|---------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Product architecture — harness, agentic flow, Vultr, Qwen |
+| [`docs/VULTR_DEPLOY.md`](docs/VULTR_DEPLOY.md) | Deploy control plane + scanners on Vultr |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Scan error codes for operators |
+
+## Quick start (offline demo)
 
 ```bash
 git clone https://github.com/lupong/toolpain.git
 cd toolpain
-python3.12 -m venv .venv && source .venv/bin/activate
+cp .env.example .env          # PROVISIONER=demo, LLM_MODE=fixture
 make install
-cp .env.example .env          # PROVISIONER=fake, LLM_MODE=fake
 make dev                      # http://127.0.0.1:8000
 ```
 
-1. Open the UI. Click **decoy-trap-server (flagged)**.
-2. Watch the live stepper + log. An alert toast fires when `fetch_report` trips the decoy.
-3. When the scan finishes, open **Findings** and **Access graph**.
-4. Download JSON or copy the least-privilege allowlist.
+Open the UI → **decoy-trap-server (flagged)** → watch findings and the access graph.
 
-Other demo chips: `server-filesystem (clean)`, `playwright-mcp (powerful)`.
+For a real Docker sandbox on your machine: `PROVISIONER=local` and `make demo`.
 
-### Real local sandbox demo
-
-With Docker running:
+## Production (Vultr)
 
 ```bash
-# .env: PROVISIONER=local
-make demo
+PROVISIONER=vultr
+LLM_MODE=live
+VULTR_INFERENCE_API_KEY=…    # Serverless Inference
+CODEGEN_MODEL=qwen3.8-27b    # repo review + bootstrap/probe codegen
+VULTR_API_KEY=…              # CP-scoped service user (see deploy doc)
+VULTR_SNAPSHOT_ID=…          # baked scanner image
+CONTROL_PLANE_URL=https://…  # reachable from scanner VMs
 ```
 
-This scans `demo/decoy-trap-server` end to end and shows a contained decoy trip.
-
-### Scan a real GitHub MCP server
-
-Fetch/build/launch are packaged (data-only plans + allowlisted templates). Example — official time server:
-
-```bash
-# .env: PROVISIONER=local
-make dev   # then paste https://github.com/modelcontextprotocol/servers in the UI
-# or CLI:
-python -m runner.main --scan-id s_time \
-  --repo-url https://github.com/modelcontextprotocol/servers \
-  --prefer-subdir src/time
-```
-
-`sandbox=auto` uses FakeSandbox only for `demo/**`; everything else clones, builds a strace-capable image from `runner/templates/`, trials LaunchPlan argv until MCP `initialize` succeeds, then probes inside DockerSandbox.
+Full bake / CP / smoke-scan checklist: **[`docs/VULTR_DEPLOY.md`](docs/VULTR_DEPLOY.md)**.
 
 ## Safety
 
-The only deliberately-bad test server is `demo/decoy-trap-server`. It reads **only** `/workspace/canaries/decoy_secret.txt` (planted by ToolPain) and attempts **only** `collector.sinkhole.local` (in-sandbox sinkhole). It never touches real secret paths (`~/.ssh`, `~/.aws`, browser stores) or real hosts.
+Scanned servers run only inside containers on ephemeral Vultr scanners (or local Docker in `local` mode). Egress is sinkholed. Decys are planted by ToolPain. Model-written scripts must pass AST/shell guards before execution.
 
-## Architecture
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Build status: [`PROGRESS.md`](PROGRESS.md). Deploy: [`infra/README-deploy.md`](infra/README-deploy.md).
-
-| Mode | When |
-|---|---|
-| `PROVISIONER=fake` | Offline UI + API demo (default) |
-| `PROVISIONER=local` | Runner + Docker sandbox on this machine |
-| `PROVISIONER=vultr` | Ephemeral Vultr VMs (`VULTR_API_KEY` required) |
-
-LLM calls go through the control-plane proxy. For diverse repos the model emits **executable** scan artifacts (AST/shell-guarded):
-
-- `launch_sh` — container entrypoint only
-- `probe_py` — `build_plans()` (+ optional `next_plans()` for a second probe round)
-- `workdir_pick_py` — monorepo package selection when `prefer_subdir` is unset
-- `oracle_py` — `review_observations()` → structured findings after probing
-
-Optional **scan brief** (UI / `scan_brief` API field) is prompt context that biases those generators. Install/language recipes stay JSON; Dockerfiles stay packaged templates.
-
-| `LLM_MODE` | Backend |
-|---|---|
-| `fake` | Fixtures (default for offline tests) |
-| `openai` | OpenAI API (`OPENAI_API_KEY`, model default `gpt-4o-mini`) |
-| `ollama` | Local [Ollama](http://127.0.0.1:11434) OpenAI `/v1` (`OLLAMA_MODEL`, default `llama3.2:latest`) |
-| `live` | [Vultr Serverless Inference](https://api.vultrinference.com/v1) (`VULTR_INFERENCE_API_KEY`) |
-
-## Support matrix (v3)
-
-| Target | Status |
-|---|---|
-| Python / Node stdio MCP | Supported |
-| HTTP / SSE MCP (`protocol=http\|sse` + `mcp_url`) | Supported for an already-running endpoint |
-| Go / Rust | Bring-your-own image (`image` + `server_cmd`); otherwise `unsupported_language` |
-| gVisor | Optional when `runsc` is installed (`RUNTIME=runsc`) |
-
-Share a finished report with `POST /api/scans/{id}/share`. Compare two reports with `GET /api/compare?a=&b=`.
+The only deliberately-bad test server is `demo/decoy-trap-server` — it reads a planted decoy and talks only to the in-sandbox sinkhole.
 
 ## License
 

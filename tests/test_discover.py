@@ -80,6 +80,40 @@ def test_parse_docs_tools_variants() -> None:
     assert parse_docs_tools(readme) == ["alpha", "beta_tool", "gamma", "delta"]
 
 
+def test_docs_text_includes_tools_md(tmp_path: Path) -> None:
+    from runner.main import _readme_text
+    from runner.plans import RepoManifest
+
+    (tmp_path / "README.md").write_text("# Excel\nSee TOOLS.md\n", encoding="utf-8")
+    (tmp_path / "TOOLS.md").write_text(
+        "## Tools\n\n- `clear_range`: clear cells\n- `delete_sheet`: remove a sheet\n",
+        encoding="utf-8",
+    )
+    manifest = RepoManifest(
+        repo_url="",
+        ref="",
+        commit="local",
+        root=tmp_path,
+        workdir=tmp_path,
+        language="python",
+        manifests=["pyproject.toml"],
+        package_name="excel-mcp-server",
+        candidates=["."],
+        readme_path="README.md",
+    )
+    text = _readme_text(manifest) or ""
+    assert "TOOLS.md" in text
+    assert parse_docs_tools(text) == ["clear_range", "delete_sheet"]
+
+
+def test_parse_docs_tools_inline_call() -> None:
+    readme = (
+        "It exposes one tool: `convert_to_markdown(uri)`, where uri can be any `http:` URI.\n"
+        "Arguments such as `timezone` stay out.\n"
+    )
+    assert parse_docs_tools(readme) == ["convert_to_markdown"]
+
+
 def test_parse_docs_tools_skips_nested_arguments() -> None:
     readme = """### Available Tools
 
@@ -99,6 +133,65 @@ def test_parse_docs_tools_skips_nested_arguments() -> None:
     - `timezone` (string): IANA timezone name.
 """
     assert parse_docs_tools(readme) == ["get_current_time", "convert_time", "get_time_ago"]
+
+
+def test_docs_noise_headings_are_not_tools() -> None:
+    from runner.discover import is_plausible_tool_name
+
+    assert not is_plausible_tool_name("Function")
+    assert not is_plausible_tool_name("Setup")
+    assert not is_plausible_tool_name("Supported")
+    assert not is_plausible_tool_name("Usage")
+    assert is_plausible_tool_name("execute_sql")
+    assert is_plausible_tool_name("list_tables")
+    assert is_plausible_tool_name("browser_navigate")
+
+
+def test_merge_skips_undocumented_when_docs_are_only_noise() -> None:
+    base = ServerSnapshot(
+        tools=[
+            ToolInfo(name="execute_sql"),
+            ToolInfo(name="list_tables"),
+            ToolInfo(name="database_overview"),
+        ]
+    )
+    result = _merge(
+        base=base,
+        flag_tools={},
+        flag_names={},
+        hits=[],
+        docs_tools=["Function", "Setup", "Supported", "Usage"],
+        runtime_names={"execute_sql", "list_tables", "database_overview"},
+        attempts=[],
+        notes=[],
+        have_docs=True,
+    )
+    assert result.docs_tools == []
+    assert result.names == ["database_overview", "execute_sql", "list_tables"]
+    assert result.undocumented == []
+    assert any("skipping undocumented" in n or "not treating README" in n for n in result.notes)
+
+
+def test_merge_still_flags_undocumented_when_docs_catalog_hits() -> None:
+    base = ServerSnapshot(
+        tools=[
+            ToolInfo(name="add"),
+            ToolInfo(name="secret"),
+        ]
+    )
+    result = _merge(
+        base=base,
+        flag_tools={},
+        flag_names={},
+        hits=[],
+        docs_tools=["add"],
+        runtime_names={"add", "secret"},
+        attempts=[],
+        notes=[],
+        have_docs=True,
+    )
+    assert result.undocumented == ["secret"]
+    assert result.get("add") is not None and result.get("add").documented
 
 
 def test_merge_drops_argument_names_listed_as_tools() -> None:

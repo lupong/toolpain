@@ -34,6 +34,8 @@ STAT_KEYS = {
     "toxic_combos",
     "egress_attempted",
     "decoy_reads",
+    "research_profiled",
+    "research_total",
 }
 TOOL_KEYS = {"name", "privilege", "verdict", "sources", "egress", "decoy_reads"}
 FINDING_KEYS = {"id", "severity", "type", "tool", "title", "evidence"}
@@ -83,6 +85,8 @@ def test_decoy_trap_fork_drift_and_toxic_combo(decoy_scan: dict[str, Any]) -> No
         "toxic_combos": len(combos),
         "egress_attempted": 1,
         "decoy_reads": 1,
+        "research_profiled": 6,
+        "research_total": 6,
     }
 
 
@@ -97,7 +101,12 @@ def test_decoy_trap_tools_and_egress(decoy_scan: dict[str, Any]) -> None:
         assert tools[name]["verdict"] == "confirmed" and tools[name]["privilege"] == "info"
         assert tools[name]["egress"] == [] and tools[name]["decoy_reads"] == 0
     assert report["egress"]["attempted"] == [
-        {"host": "collector.sinkhole.local", "tool": "fetch_report", "blocked": True}
+        {
+            "host": "collector.sinkhole.local",
+            "tool": "fetch_report",
+            "blocked": True,
+            "declared": False,
+        }
     ]
     assert "fetch_report" not in report["least_privilege_config"]["allow_tools"]
     assert "add" in report["least_privilege_config"]["allow_tools"]
@@ -231,6 +240,16 @@ def test_discrepancy_kinds_and_fork_drift() -> None:
     assert fork_drift(discovery, None) == []
 
 
+def test_documented_missing_skips_a_readme_catalog() -> None:
+    tools = [tool(f"live_{i}", sources=["R"], documented=True) for i in range(20)]
+    tools += [tool(f"ghost_{i}", documented=True, sources=["D"]) for i in range(40)]
+    discovery = DiscoveryResult(tools=tools)
+    found = find_discrepancies(
+        discovery, {t.name: assess_privilege(t) for t in discovery.tools}
+    )
+    assert not any(d.kind == "documented_missing" for d in found)
+
+
 # ---------------------------------------------------------------------------
 # egress.py / anomalies.py / downstream.py
 # ---------------------------------------------------------------------------
@@ -250,6 +269,74 @@ def test_egress_declared_vs_attempted_and_ingress() -> None:
     assert [a.host for a in result.undeclared] == ["evil.local"]
     assert result.ingress == [{"port": 8080, "proto": "tcp", "tool": "b"}]
     assert declared_hosts(None) == []
+
+
+def test_declared_hosts_ignore_readme_badges() -> None:
+    readme = (
+        "![ci](https://img.shields.io/badge/ci-green)\n"
+        '<img src="https://raw.githubusercontent.com/org/repo/main/logo.png">\n'
+        "Talks to https://api.vendor.example/v1\n"
+        "Docs at https://modelcontextprotocol.io/docs\n"
+    )
+    assert declared_hosts(readme) == ["api.vendor.example"]
+
+
+def test_declared_hosts_implies_github_api_from_product_docs() -> None:
+    readme = (
+        "The GitHub MCP Server connects tools to GitHub.\n"
+        "Install from https://github.com/github/github-mcp-server\n"
+        "Badge https://goreportcard.com/report/github.com/x\n"
+        "Editor https://code.visualstudio.com/\n"
+        "Enterprise https://yoursubdomain.ghe.com/\n"
+        "Docs https://docs.github.com/en/x\n"
+    )
+    hosts = declared_hosts(readme)
+    assert "api.github.com" in hosts
+    assert "goreportcard.com" not in hosts
+    assert "code.visualstudio.com" not in hosts
+    assert "yoursubdomain.ghe.com" not in hosts
+    assert "docs.github.com" not in hosts
+    probes = {"list_issues": ProbeResult(tool="list_issues", egress_hosts=["api.github.com"])}
+    result = analyze_egress(probes, readme)
+    assert result.undeclared == []
+    assert result.attempted[0].declared is True
+
+
+def test_remote_github_delete_is_network_not_local_file_write() -> None:
+    t = tool(
+        "delete_file",
+        "Delete a file from a GitHub repository",
+        props={"path": {"type": "string"}, "owner": {}, "repo": {}},
+    )
+    assessment = assess_privilege(t)
+    assert "file_write" not in assessment.claimed
+    assert "network" in assessment.claimed
+    assert assessment.tier != "critical"
+
+
+def test_github_tool_claims_network_not_shell_from_git_command_docs() -> None:
+    t = tool(
+        "create_or_update_file",
+        "Create or update a file in a GitHub repository. Use the git command: git ls-tree HEAD.",
+        props={"path": {"type": "string"}},
+    )
+    assessment = assess_privilege(
+        t, probe=ProbeResult(tool=t.name, egress_hosts=["api.github.com"])
+    )
+    assert "network" in assessment.claimed
+    assert "shell" not in assessment.claimed
+    assert assessment.exceeds == []
+
+
+def test_declared_only_network_is_not_a_description_mismatch() -> None:
+    t = tool("get_label", "Get a specific label from a repository.")
+    assessment = assess_privilege(
+        t,
+        probe=ProbeResult(tool=t.name, egress_hosts=["api.github.com"]),
+        declared_hosts=["api.github.com"],
+    )
+    assert assessment.exceeds == []
+    assert "network" in assessment.claimed
 
 
 def test_anomalies_detect_metadata_obfuscation_injection_and_subprocess() -> None:

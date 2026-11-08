@@ -86,6 +86,10 @@ class Database:
                 ("error_code", "TEXT"),
                 ("error_detail", "TEXT"),
                 ("estimate_json", "TEXT"),
+                ("ticket", "TEXT"),
+                ("token_label", "TEXT"),
+                ("cert_report_sha256", "TEXT"),
+                ("cert_pdf_sha256", "TEXT"),
             ):
                 if name not in cols:
                     conn.execute(f"ALTER TABLE scans ADD COLUMN {name} {decl}")
@@ -108,16 +112,30 @@ class Database:
         token: str,
         account_mode: str,
         demo: str | None = None,
+        ticket: str | None = None,
+        token_label: str | None = None,
     ) -> ScanSummary:
         now = _utcnow().isoformat()
         with self._lock, self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO scans
-                (id, repo_url, ref, status, account_mode, token, demo, created_at, updated_at)
-                VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+                (id, repo_url, ref, status, account_mode, token, demo, created_at, updated_at,
+                 ticket, token_label)
+                VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (scan_id, repo_url, ref, account_mode, token, demo, now, now),
+                (
+                    scan_id,
+                    repo_url,
+                    ref,
+                    account_mode,
+                    token,
+                    demo,
+                    now,
+                    now,
+                    ticket,
+                    token_label,
+                ),
             )
         return self.get_scan(scan_id)  # type: ignore[return-value]
 
@@ -139,6 +157,8 @@ class Database:
             demo=row["demo"],
             error_code=row["error_code"] if "error_code" in row.keys() else None,
             error_detail=row["error_detail"] if "error_detail" in row.keys() else None,
+            ticket=row["ticket"] if "ticket" in row.keys() else None,
+            token_label=row["token_label"] if "token_label" in row.keys() else None,
         )
 
     def get_token(self, scan_id: str) -> str | None:
@@ -261,6 +281,16 @@ class Database:
     def hash_token(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
 
+    def token_label(self, token: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT label FROM api_tokens WHERE token_hash = ?",
+                (self.hash_token(token),),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row["label"]) if row["label"] else None
+
     def issue_api_token(self, token: str, label: str, quota: int) -> None:
         now = _utcnow().isoformat()
         with self._lock, self.connect() as conn:
@@ -343,3 +373,51 @@ class Database:
         if not row:
             return None
         return json.loads(row["body"])
+
+    def seal_certificate(
+        self, scan_id: str, report_sha256: str, pdf_sha256: str | None = None
+    ) -> None:
+        """Record the first certificate hashes. Later writes do not replace them."""
+        with self._lock, self.connect() as conn:
+            row = conn.execute(
+                "SELECT cert_report_sha256, cert_pdf_sha256 FROM scans WHERE id = ?",
+                (scan_id,),
+            ).fetchone()
+            if not row:
+                return
+            report_sha = row["cert_report_sha256"] or report_sha256
+            pdf_sha = row["cert_pdf_sha256"] or pdf_sha256
+            conn.execute(
+                "UPDATE scans SET cert_report_sha256 = ?, cert_pdf_sha256 = ? WHERE id = ?",
+                (report_sha, pdf_sha, scan_id),
+            )
+
+    def certificate_seal(self, scan_id: str) -> tuple[str | None, str | None]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT cert_report_sha256, cert_pdf_sha256 FROM scans WHERE id = ?",
+                (scan_id,),
+            ).fetchone()
+        if not row:
+            return None, None
+        return row["cert_report_sha256"], row["cert_pdf_sha256"]
+
+    def status_counts(self) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM scans GROUP BY status"
+            ).fetchall()
+        return {str(r["status"]): int(r["n"]) for r in rows}
+
+    def failed_since(self, since_iso: str) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT COALESCE(error_code, 'failed') AS code, COUNT(*) AS n
+                FROM scans
+                WHERE status = 'failed' AND updated_at >= ?
+                GROUP BY code
+                """,
+                (since_iso,),
+            ).fetchall()
+        return {str(r["code"]): int(r["n"]) for r in rows}

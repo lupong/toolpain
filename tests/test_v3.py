@@ -78,8 +78,8 @@ async def test_http_mcp_lists_tools() -> None:
 
 
 def test_api_token_isolates_scans(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROVISIONER", "fake")
-    monkeypatch.setenv("LLM_MODE", "fake")
+    monkeypatch.setenv("PROVISIONER", "demo")
+    monkeypatch.setenv("LLM_MODE", "fixture")
     monkeypatch.setenv("TOOLPAIN_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("TOOLPAIN_ADMIN_TOKEN", "admin-test")
 

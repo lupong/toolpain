@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ToolPain: find the tools that hurt</title>
 <meta name="description" content="ToolPain scans MCP servers in a locked-down sandbox and reports what every tool really does.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -42,8 +43,7 @@
     <nav class="tp-nav__links" aria-label="Primary">
       <a href="#how">How it works</a>
       <a href="#recent">Recent scans</a>
-      <span class="tp-eyebrow mono" id="ops-status" title="Control plane health">…</span>
-      <a href="https://github.com/">GitHub</a>
+      <a href="https://github.com/lupong/toolpain" rel="noopener noreferrer" target="_blank">GitHub</a>
       <button type="button" class="tp-btn tp-btn--ghost tp-btn--icon" data-theme-toggle aria-label="Switch to light theme"><svg class="tp-icon" aria-hidden="true"><use href="#i-sun"/></svg></button>
     </nav>
   </div>
@@ -52,9 +52,17 @@
 <main>
   <section class="tp-container tp-container--narrow tp-hero">
     <div class="tp-hero__copy">
-      <span class="tp-eyebrow tp-eyebrow--accent">Security scanner for MCP tools</span>
-      <h1 class="tp-hero__title">Find the tools that hurt before they hurt you.</h1>
-      <p class="tp-hero__tagline">Every MCP tool, proven at runtime. Nothing leaves the sandbox.</p>
+      <div class="tp-hero__intro">
+        <span class="tp-eyebrow tp-eyebrow--accent">Security scanner for MCP tools</span>
+        <h1 class="tp-hero__title">Find the tools that hurt before they hurt you.</h1>
+        <p class="tp-hero__tagline">Every MCP tool, proven at runtime. Nothing leaves the sandbox.</p>
+      </div>
+      <p class="tp-hero__lede">Paste a GitHub link to an MCP server. ToolPain runs it on a throwaway Vultr VM with no internet, calls every tool, and reports what each one really does versus what it claims.</p>
+      <ul class="tp-promises">
+        <li><svg class="tp-icon tp-icon--sm"><use href="#i-lock"/></svg>Network blocked at runtime</li>
+        <li><svg class="tp-icon tp-icon--sm"><use href="#i-shield"/></svg>gVisor sandbox</li>
+        <li><svg class="tp-icon tp-icon--sm"><use href="#i-trash"/></svg>VM destroyed after every scan</li>
+      </ul>
     </div>
 
     <!-- Intake. JS: validates URL → .tp-input-wrap--valid|--error and fills #repo-chip; BYO toggle reveals [data-byo]. -->
@@ -64,12 +72,28 @@
         <div class="tp-input-wrap" id="repo-wrap">
           <svg class="tp-icon"><use href="#i-link"/></svg>
           <input id="repo" name="repo" type="url" inputmode="url" autocomplete="off" spellcheck="false" required
-                 placeholder="https://github.com/owner/repo" value="https://github.com/andrew/playwright-mcp"
+                 placeholder="https://github.com/owner/repo" value="https://github.com/microsoft/playwright-mcp"
                  aria-describedby="repo-help repo-error">
         </div>
         <span class="tp-chip tp-chip--valid tp-repo-valid" id="repo-chip" hidden><svg class="tp-icon tp-icon--sm"><use href="#i-check"/></svg><span></span></span>
         <p class="tp-help" id="repo-help">Public repos only. Forks are compared against upstream automatically.</p>
         <p class="tp-error-text" id="repo-error" hidden><svg class="tp-icon"><use href="#i-alert"/></svg>Use a full repo link like https://github.com/owner/repo</p>
+        <p class="tp-inspect-status" id="repo-inspect-status" hidden role="status" aria-live="polite">
+          <svg class="tp-icon tp-icon--sm tp-inspect-status__icon"><use href="#i-spin"></use></svg>
+          <span id="repo-inspect-status-text">Checking the repo for MCP servers…</span>
+        </p>
+      </div>
+
+      <div id="monorepo-panel" class="tp-monorepo" hidden role="region" aria-labelledby="monorepo-title">
+        <div class="tp-monorepo__title" id="monorepo-title"><svg class="tp-icon"><use href="#i-warn"/></svg>Multiple MCP servers detected</div>
+        <p class="tp-monorepo__msg" id="monorepo-msg"></p>
+        <div class="tp-field">
+          <label for="package-pick" class="tp-label">Server to scan <span class="tp-label__hint">(required)</span></label>
+          <select id="package-pick" name="package_pick" class="tp-input" aria-describedby="package-pick-help">
+            <option value="">Select one MCP server…</option>
+          </select>
+          <p class="tp-help" id="package-pick-help">This repo has more than one MCP server. Choose which one this scan should run.</p>
+        </div>
       </div>
 
       <div class="tp-field">
@@ -78,35 +102,46 @@
       </div>
 
       <div class="tp-field">
-        <label for="protocol" class="tp-label">Protocol <span class="tp-label__hint">(optional)</span></label>
-        <select id="protocol" name="protocol" class="tp-input">
-          <option value="auto">auto</option>
-          <option value="stdio">stdio</option>
-          <option value="http">http</option>
-          <option value="sse">sse</option>
-        </select>
-      </div>
-
-      <div class="tp-field">
-        <label for="scan-brief" class="tp-label">Scan brief <span class="tp-label__hint">(optional)</span></label>
-        <textarea id="scan-brief" name="scan_brief" class="tp-input" rows="2" maxlength="2000"
-                  placeholder="e.g. Focus on exfil and auth tools; prefer the time server package in this monorepo"
-                  aria-describedby="brief-help"></textarea>
-        <p class="tp-help" id="brief-help">Steers generated launch/probe/oracle code. Never grants host access.</p>
+        <label for="ticket" class="tp-label">Ticket number <span class="tp-label__hint">(optional)</span></label>
+        <input id="ticket" name="ticket" class="tp-input" type="text" placeholder="RITM0012345" autocomplete="off" spellcheck="false" maxlength="64">
+        <p class="tp-help">Printed on the certificate so the record and the ticket point at each other.</p>
       </div>
 
       <details class="tp-disclosure">
         <summary>Advanced <span class="tp-eyebrow" id="account-mode" style="margin-left:auto;margin-right:8px">toolpain account</span></summary>
         <div class="tp-disclosure__body">
           <div class="tp-field">
-            <label for="prefer-subdir" class="tp-label">Package subdirectory <span class="tp-label__hint">(optional)</span></label>
-            <input id="prefer-subdir" name="prefer_subdir" class="tp-input" type="text" placeholder="src/time" autocomplete="off" spellcheck="false">
-            <p class="tp-help">Skip LLM workdir pick and use this monorepo path.</p>
+            <label for="protocol" class="tp-label">Protocol <span class="tp-label__hint">(optional)</span></label>
+            <select id="protocol" name="protocol" class="tp-input">
+              <option value="auto">auto</option>
+              <option value="stdio">stdio</option>
+              <option value="http">http</option>
+              <option value="sse">sse</option>
+            </select>
+          </div>
+          <div class="tp-field">
+            <label for="scan-brief" class="tp-label">Scan brief <span class="tp-label__hint">(optional)</span></label>
+            <textarea id="scan-brief" name="scan_brief" class="tp-input" rows="2" maxlength="2000"
+                      placeholder="e.g. Focus on file-read tools; ignore admin helpers"
+                      aria-describedby="brief-help"></textarea>
+            <p class="tp-help" id="brief-help">Steers how launch/probe code is generated for the chosen server. Never grants host access.</p>
+          </div>
+          <div class="tp-field">
+            <label for="prefer-subdir" class="tp-label">Server subdirectory <span class="tp-label__hint">(optional — skips auto-pick)</span></label>
+            <input id="prefer-subdir" name="prefer_subdir" class="tp-input" type="text" placeholder="src/filesystem" autocomplete="off" spellcheck="false">
+            <p class="tp-help">Exact path to one MCP server in a multi-server repo (e.g. <code>src/filesystem</code> or <code>servers/Example.Mcp.Server</code>).</p>
           </div>
           <div class="tp-field">
             <label for="mcp-url" class="tp-label">Existing MCP URL <span class="tp-label__hint">(optional)</span></label>
             <input id="mcp-url" name="mcp_url" class="tp-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:3000/mcp">
             <p class="tp-help">Scan an already-running HTTP or SSE server. Localhost HTTP, or public HTTPS. Private and metadata hosts are rejected.</p>
+          </div>
+          <div class="tp-row" style="justify-content:space-between;flex-wrap:nowrap;gap:16px">
+            <div>
+              <div id="pool-label" style="font-size:14px;font-weight:500">Use warm scanner pool</div>
+              <div class="tp-help" id="pool-toggle-help">Off by default. When on, claim a ready scanner instead of creating a new VM (falls back if none idle).</div>
+            </div>
+            <button type="button" class="tp-toggle" id="pool-toggle" aria-pressed="false" aria-labelledby="pool-label"></button>
           </div>
           <div class="tp-row" style="justify-content:space-between;flex-wrap:nowrap;gap:16px">
             <div>
@@ -136,6 +171,8 @@
       </details>
 
       <div class="tp-stack">
+        <p class="tp-help" id="scanner-mode-text" role="status" aria-live="polite">New Vultr VM per scan.</p>
+        <p class="tp-help" id="pool-status" hidden></p>
         <button type="submit" class="tp-btn tp-btn--primary tp-btn--lg" id="scan-btn">
           Scan it <svg class="tp-icon"><use href="#i-arrow-right"/></svg>
         </button>
@@ -150,23 +187,62 @@
         </div>
       </div>
     </form>
-    <p class="tp-hero__lede">Paste a GitHub link to an MCP server. ToolPain runs it on a throwaway Vultr VM with no internet, calls every tool, and reports what each one really does versus what it claims.</p>
-    <ul class="tp-promises">
-      <li><svg class="tp-icon tp-icon--sm"><use href="#i-lock"/></svg>Network blocked at runtime</li>
-      <li><svg class="tp-icon tp-icon--sm"><use href="#i-shield"/></svg>gVisor sandbox</li>
-      <li><svg class="tp-icon tp-icon--sm"><use href="#i-trash"/></svg>VM destroyed after every scan</li>
-    </ul>
   </section>
 
   <section id="how" class="tp-container tp-container--narrow tp-section">
-    <h2 class="tp-eyebrow" style="margin-bottom:20px">How it works</h2>
+    <h2 class="tp-eyebrow" style="margin-bottom:12px">How it works</h2>
+    <p class="tp-help" style="margin:0 0 20px;max-width:52ch">ToolPain is the harness. Vultr is the substrate. An agentic loop on Vultr Inference (Qwen) reads the repo, writes bootstrap and probe programs, and the scanner runs them in isolation.</p>
     <ol class="tp-how">
-      <li><span class="tp-how__n">01</span><span class="tp-how__t">Provision VM</span><span class="tp-how__d">A fresh Vultr instance, tagged toolpain, firewalled with no inbound.</span></li>
-      <li><span class="tp-how__n">02</span><span class="tp-how__t">Build</span><span class="tp-how__d">Dependencies install in a separate build stage. The only stage with network.</span></li>
-      <li><span class="tp-how__n">03</span><span class="tp-how__t">Isolate</span><span class="tp-how__d">Internal-only network, gVisor runtime, DNS sinkholed, decoys planted.</span></li>
-      <li><span class="tp-how__n">04</span><span class="tp-how__t">Probe every tool</span><span class="tp-how__d">Discover from runtime, flags, source and docs. Call each tool, trace everything.</span></li>
-      <li><span class="tp-how__n">05</span><span class="tp-how__t">Destroy VM</span><span class="tp-how__d">Report saved, instance deleted. Nothing persists.</span></li>
+      <li><span class="tp-how__n">01</span><span class="tp-how__t">Provision on Vultr</span><span class="tp-how__d">Control plane creates (or claims) an ephemeral scanner VM from the baked snapshot.</span></li>
+      <li><span class="tp-how__n">02</span><span class="tp-how__t">Agent codegen</span><span class="tp-how__d">Qwen on Vultr Inference reviews the repo and emits setup, launch, and probe programs under guards.</span></li>
+      <li><span class="tp-how__n">03</span><span class="tp-how__t">Isolate &amp; probe</span><span class="tp-how__d">Docker sandbox, sinkholed network, decoys planted. Every tool is called and traced.</span></li>
+      <li><span class="tp-how__n">04</span><span class="tp-how__t">Analyze &amp; certify</span><span class="tp-how__d">Claims vs runtime, privilege, egress. LLM writes IT-facing findings and the certificate.</span></li>
+      <li><span class="tp-how__n">05</span><span class="tp-how__t">Destroy</span><span class="tp-how__d">Report saved on the control plane. Scanner VM destroyed. Nothing persists on the host.</span></li>
     </ol>
+
+    <div class="tp-arch" aria-label="Agentic scan architecture on Vultr">
+      <p class="tp-arch__label">On Vultr</p>
+      <div class="tp-arch__row tp-arch__row--top">
+        <article class="tp-arch__node tp-arch__node--browser">
+          <span class="tp-arch__kicker">You</span>
+          <strong>Browser</strong>
+          <span class="tp-arch__meta">Paste a GitHub MCP repo</span>
+        </article>
+        <span class="tp-arch__arrow" aria-hidden="true"></span>
+        <article class="tp-arch__node tp-arch__node--cp">
+          <span class="tp-arch__kicker">Harness</span>
+          <strong>Control plane</strong>
+          <span class="tp-arch__meta">API · UI · scan orchestration</span>
+        </article>
+      </div>
+      <div class="tp-arch__split">
+        <div class="tp-arch__branch">
+          <span class="tp-arch__wire" aria-hidden="true"><span>Vultr API</span></span>
+          <article class="tp-arch__node tp-arch__node--scan">
+            <span class="tp-arch__kicker">Compute</span>
+            <strong>Scanner VM</strong>
+            <ul class="tp-arch__list">
+              <li>Clone &amp; Docker sandbox</li>
+              <li>Sinkhole · decoys · strace</li>
+              <li>Report callbacks</li>
+            </ul>
+          </article>
+        </div>
+        <div class="tp-arch__branch">
+          <span class="tp-arch__wire" aria-hidden="true"><span>Inference</span></span>
+          <article class="tp-arch__node tp-arch__node--llm">
+            <span class="tp-arch__kicker">Agent</span>
+            <strong>Vultr Inference · Qwen</strong>
+            <ul class="tp-arch__list">
+              <li>Review repo → setup / launch</li>
+              <li>Probe &amp; oracle · repair loop</li>
+              <li>Profiles · certificate copy</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+      <p class="tp-arch__footnote">Qwen drives the scanner; the harness contains every step and tears the VM down when the scan ends.</p>
+    </div>
   </section>
 
   <section id="recent" class="tp-container tp-container--narrow tp-section" style="padding-bottom:72px">
@@ -180,9 +256,9 @@
         <thead><tr><th scope="col">Repository</th><th scope="col">Verdict</th><th scope="col">Findings</th><th scope="col" style="text-align:right">When</th></tr></thead>
         <tbody>
           <tr>
-            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">andrew/playwright-mcp</a></td>
-            <td><span class="tp-badge tp-verdict--flagged"><svg class="tp-icon tp-icon--sm"><use href="#i-flag"/></svg>Flagged</span></td>
-            <td class="mono">3</td><td class="muted" style="text-align:right">4 min ago</td>
+            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">microsoft/playwright-mcp</a></td>
+            <td><span class="tp-badge tp-verdict--over"><svg class="tp-icon tp-icon--sm"><use href="#i-up"/></svg>Over-privileged</span></td>
+            <td class="mono">2</td><td class="muted" style="text-align:right">4 min ago</td>
           </tr>
           <tr>
             <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">modelcontextprotocol/servers · server-filesystem</a></td>
@@ -190,9 +266,9 @@
             <td class="mono">0</td><td class="muted" style="text-align:right">12 min ago</td>
           </tr>
           <tr>
-            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">microsoft/playwright-mcp</a></td>
-            <td><span class="tp-badge tp-verdict--over"><svg class="tp-icon tp-icon--sm"><use href="#i-up"/></svg>Over-privileged</span></td>
-            <td class="mono">2</td><td class="muted" style="text-align:right">38 min ago</td>
+            <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">hashicorp/terraform-mcp-server</a></td>
+            <td><span class="tp-badge tp-verdict--suspicious"><svg class="tp-icon tp-icon--sm"><use href="#i-warn"/></svg>Suspicious</span></td>
+            <td class="mono">1</td><td class="muted" style="text-align:right">38 min ago</td>
           </tr>
           <tr>
             <td><a class="mono" href="scan.html?state=done" style="color:var(--text);text-decoration:none">toolpain/decoy-trap-server</a></td>
@@ -209,6 +285,7 @@
   <div class="tp-container tp-container--narrow tp-footer__inner">
     <span class="mono">toolpain.com</span>
     <span>Scans run on Vultr. Nothing leaves the sandbox.</span>
+    <span class="mono" id="ops-status" hidden></span>
   </div>
 </footer>
 

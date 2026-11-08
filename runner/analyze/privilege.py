@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from runner.analyze.egress import host_is_declared
 from runner.models import DiscoveredTool
 from runner.probe import ProbeResult
 from runner.research import ToolProfile
@@ -26,13 +27,17 @@ TIER_ORDER: list[Tier] = ["critical", "high", "medium", "low", "info"]
 CODE_EXEC_RE = re.compile(
     r"\b(eval|evaluate|exec|execute|run_?code|run_?script|javascript)\b", re.I
 )
-SHELL_RE = re.compile(r"\b(shell|bash|subprocess|spawn|terminal|run_?command|command)\b", re.I)
+SHELL_RE = re.compile(
+    r"\b(shell|bash|subprocess|spawn|terminal|run_?command|shell_?command)\b",
+    re.I,
+)
 WRITE_RE = re.compile(
     r"\b(write|save|create_?file|edit_?file|append|delete|remove|move|rename|mkdir)\b", re.I
 )
 READ_RE = re.compile(r"\b(read|cat|open_?file|get_?file|load|list_?dir\w*|search_?files)\b", re.I)
 NETWORK_RE = re.compile(
-    r"\b(fetch|http|https|download|navigate|request|browse|web|curl|post|webhook|send|upload)\b",
+    r"\b(fetch|http|https|download|navigate|request|browse|web|curl|post|webhook|"
+    r"send|upload|github|gitlab|bitbucket|remote)\b",
     re.I,
 )
 BROWSER_RE = re.compile(
@@ -68,6 +73,8 @@ def claimed_capabilities(tool: DiscoveredTool) -> set[str]:
     has_path = any(PATH_PROP_RE.search(k) for k in props)
     has_url = any(re.search(r"(url|uri|href)$", k, re.I) for k in props)
     scoped = bool(SCOPED_RE.search(tool.description))
+    # GitHub/GitLab-style API tools mutate remote repos, not the local disk.
+    remote_api = bool(NETWORK_RE.search(text))
     caps: set[str] = set()
     if CODE_EXEC_RE.search(text):
         caps.add("code_exec")
@@ -77,11 +84,11 @@ def claimed_capabilities(tool: DiscoveredTool) -> set[str]:
         caps.update({"upload", "network"})
     if MEDIA_RE.search(tool.name) and WRITE_RE.search(text):
         caps.add("media_save")
-    elif WRITE_RE.search(text) and has_path:
+    elif WRITE_RE.search(text) and has_path and not remote_api:
         caps.add("file_write_scoped" if scoped else "file_write")
-    if READ_RE.search(text) and has_path:
+    if READ_RE.search(text) and has_path and not remote_api:
         caps.add("file_read_scoped" if scoped else "file_read")
-    if NETWORK_RE.search(text) or has_url:
+    if remote_api or has_url:
         caps.add("network")
     if BROWSER_RE.search(text):
         caps.add("browser")
@@ -145,10 +152,21 @@ def _tier(caps: set[str], tool: DiscoveredTool, reasons: list[str]) -> Tier:
 
 
 def assess_privilege(
-    tool: DiscoveredTool, profile: ToolProfile | None = None, probe: ProbeResult | None = None
+    tool: DiscoveredTool,
+    profile: ToolProfile | None = None,
+    probe: ProbeResult | None = None,
+    declared_hosts: list[str] | None = None,
 ) -> PrivilegeAssessment:
     claimed = claimed_capabilities(tool)
     observed = observed_capabilities(probe)
+    # Network only to hosts the docs already allow is within the product claim.
+    if (
+        probe
+        and probe.egress_hosts
+        and declared_hosts
+        and all(host_is_declared(h, declared_hosts) for h in probe.egress_hosts)
+    ):
+        claimed = set(claimed) | {"network"}
     caps = claimed | observed
     reasons: list[str] = []
     tier = _tier(caps, tool, reasons)

@@ -12,8 +12,8 @@ from runner.launch import local_launcher
 from runner.main import run_scan
 from runner.probe import probe_tools
 from runner.report import build_report
-from runner.research import FakeLlm, research_tools
-from sandbox.fake import FakeSandbox
+from runner.research import FixtureLlm, research_tools
+from sandbox.demo import DemoSandbox
 from sandbox.trace import parse_strace_text
 
 DECOY = Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server"
@@ -35,8 +35,8 @@ async def test_decoy_trap_analysis_flagged() -> None:
     launcher = local_launcher()
     readme = (DECOY / "README.md").read_text()
     result = await discover(launcher, source_dir=DECOY, readme_text=readme)
-    profiles = await research_tools(result, FakeLlm(), readme)
-    async with FakeSandbox("s_test") as sb:
+    profiles = await research_tools(result, FixtureLlm(), readme)
+    async with DemoSandbox("s_test") as sb:
         probes = await probe_tools(launcher, sb, result.tools)
 
     fr = probes["fetch_report"]
@@ -67,7 +67,7 @@ def test_make_demo_path() -> None:
         "s_demo",
         "https://github.com/lupong/toolpain",
         local_path=DECOY,
-        sandbox="fake",
+        sandbox="demo",
     )
     assert report["verdict"] == "flagged"
     assert any(f["type"] == "decoy_read_and_egress" for f in report["findings"])

@@ -18,7 +18,7 @@ from runner.build import ALLOWED_BASES, make_build_plan
 from runner.detect import python_console_scripts
 from runner.launch_plan import candidate_argvs
 from runner.plans import BuildPlan, LaunchCandidate, RepoManifest
-from runner.research import FakeLlm, LlmClient
+from runner.research import FixtureLlm, LlmClient
 from runner.safe_argv import (
     ArgvError,
     validate_apt_packages,
@@ -138,28 +138,40 @@ async def generate_recipe(
     llm: LlmClient,
     scan_id: str,
 ) -> AdaptiveRecipe:
-    """Ask the LLM for a scan recipe; fall back to heuristics on any failure."""
-    if isinstance(llm, FakeLlm):
+    """Ask the LLM for a scan recipe. Heuristics only when using FixtureLlm."""
+    if isinstance(llm, FixtureLlm):
         return heuristic_recipe(manifest, scan_id)
 
     messages = build_recipe_prompt(manifest)
-    for _ in range(2):
+    errors: list[str] = []
+    for _ in range(3):
         try:
             raw = await llm.chat_json(messages)
         except (httpx.HTTPError, ValueError, TimeoutError, OSError) as exc:
             log.warning("recipe llm call failed: %s", exc)
+            errors.append(str(exc))
             continue
         if not isinstance(raw, dict) or not raw:
+            errors.append("empty recipe JSON")
             continue
         try:
             return _coerce_recipe(raw, manifest, scan_id)
         except (ValidationError, ArgvError, TypeError, ValueError) as exc:
             log.warning("recipe coerce failed: %s", exc)
+            errors.append(str(exc))
             continue
-    return heuristic_recipe(manifest, scan_id)
+    raise ValueError(
+        "LLM recipe generation failed (no heuristic fallback): "
+        + "; ".join(errors[:4] or ["no valid recipe"])
+    )
 
 
 def recipe_to_build_plan(recipe: AdaptiveRecipe, manifest: RepoManifest, scan_id: str) -> BuildPlan:
+    """Legacy language Dockerfile path. The live scan uses generated setup.sh instead."""
+    log.warning(
+        "recipe_to_build_plan is off the scan path; prefer generated setup.sh (scan_id=%s)",
+        scan_id,
+    )
     base = make_build_plan(manifest, scan_id)
     # Keep packaged template/base; overlay LLM install/apt when language matches.
     language = recipe.language if recipe.language in {"python", "node"} else base.language

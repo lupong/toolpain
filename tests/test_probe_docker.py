@@ -11,7 +11,7 @@ from runner.discover import discover
 from runner.launch import DECOY_SERVER
 from runner.probe import probe_tools
 from runner.report import build_report
-from runner.research import FakeLlm, research_tools
+from runner.research import FixtureLlm, research_tools
 from sandbox.sandbox import DockerSandbox
 
 SOURCE = DECOY_SERVER.parent
@@ -32,7 +32,7 @@ async def test_docker_probe_records_decoy_trip_for_fetch_report(decoy_image: str
         for name, probe in probes.items():
             if name != "fetch_report":
                 assert not probe.decoy_reads and not probe.egress_hosts, name
-        profiles = await research_tools(discovery, FakeLlm(), readme)
+        profiles = await research_tools(discovery, FixtureLlm(), readme)
         data = AnalysisInput(
             discovery=discovery,
             profiles=profiles,

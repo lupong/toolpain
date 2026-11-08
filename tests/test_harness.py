@@ -13,7 +13,7 @@ from runner.harness import (
     heuristic_harness,
 )
 from runner.launch import local_launcher
-from runner.research import FakeLlm
+from runner.research import FixtureLlm
 
 DECOY = Path(__file__).resolve().parents[1] / "demo" / "decoy-trap-server"
 
@@ -26,7 +26,7 @@ async def test_fixture_harness_for_decoy_trap() -> None:
         source_dir=DECOY,
         readme_text=(DECOY / "README.md").read_text(),
     )
-    harness = await generate_harness(discovery, FakeLlm(), DECOY)
+    harness = await generate_harness(discovery, FixtureLlm(), DECOY)
     assert harness.source in {"fixture", "heuristic"}
     assert harness.plan_for("fetch_report") is not None
     fr = harness.plan_for("fetch_report")
@@ -44,7 +44,11 @@ def test_heuristic_harness_covers_all_tools() -> None:
 
     discovery = DiscoveryResult(
         tools=[
-            DiscoveredTool(name="alpha", input_schema={"type": "object", "properties": {}}),
+            DiscoveredTool(
+                name="alpha",
+                undocumented=True,
+                input_schema={"type": "object", "properties": {}},
+            ),
             DiscoveredTool(
                 name="fetch_report",
                 undocumented=True,
@@ -58,3 +62,5 @@ def test_heuristic_harness_covers_all_tools() -> None:
     h = heuristic_harness(discovery)
     assert {p.tool for p in h.plans} == {"alpha", "fetch_report"}
     assert h.plan_for("fetch_report") and h.plan_for("fetch_report").expect_decoy
+    alpha = h.plan_for("alpha")
+    assert alpha is not None and alpha.expect_decoy is False

@@ -1,187 +1,214 @@
 # ToolPain Architecture
 
-ToolPain is a security scanner for AI agent MCP tools. A user pastes a GitHub link; ToolPain provisions an ephemeral sandbox, runs the MCP server with no internet, probes every tool, and reports what each tool really does versus what it claims.
+ToolPain is a **harness for an agentic MCP security scan** that runs on Vultr.
 
-## 1. Goals
+A user pastes a GitHub URL. ToolPain does not apply a fixed script to every repo. It **runs an agent loop on Vultr**: provision compute, ask Vultr Inference (Qwen) to read the repository and emit the bootstrap/scan programs, execute those programs in an isolated scanner, observe runtime behavior, and turn observations into a report and certificate.
 
-- Prove runtime behavior of stdio MCP servers (Python + Node first).
-- Contain all network egress via an in-sandbox sinkhole.
-- Detect decoy reads, undeclared egress, undocumented tools, over-privilege, toxic combos.
-- Never run a scanned server outside a container.
-- Destroy the environment after every scan.
+The product thesis: **prove what MCP tools do at runtime**, inside throwaway infrastructure, before they are trusted by an agent.
 
-## 2. Components
+---
 
-### 2.1 Control plane (`control_plane/`)
+## 1. What ToolPain is
 
-FastAPI app on the long-lived Vultr VM (or localhost in `local`/`fake` mode).
+| Piece | Role |
+|-------|------|
+| **Harness** | Control plane + runner orchestrate the scan lifecycle, guards, and teardown |
+| **Agent** | Vultr Inference models (notably **Qwen** for codegen) review the repo and write the executable scan artifacts |
+| **Infra** | Vultr VMs, snapshots, networking, and Serverless Inference — the scan does not live on the operator’s laptop in production |
 
-- Public API + SSE for the web UI
-- Serves `web/`
-- Provisioner: `vultr` | `local` | `fake`
-- Reaper for orphaned scan VMs
-- SQLite (`scans`, `events`, `reports`)
-- LLM proxy (sole holder of `VULTR_INFERENCE_API_KEY`)
-- Runner callbacks authenticated by per-scan token (`X-Scan-Token`)
+ToolPain owns containment (Docker, sinkhole, decoys, AST/shell guards) and the observation pipeline. The model owns adapting to each MCP server’s language, layout, and entrypoint.
 
-### 2.2 Runner (`runner/`)
+---
 
-Python process on the ephemeral scanner VM (or a container / subprocess in `local` mode).
+## 2. Vultr as the substrate
 
-Stages: fetch → build → isolate → discover → research → probe → analyze → report.
+Production ToolPain is built around Vultr end to end:
 
-Posts events and the final report to the control plane. Calls the control-plane LLM proxy for research.
+```
+                    ┌─────────────────────────────────────────┐
+                    │           Vultr account                  │
+                    │                                         │
+  Browser ──HTTPS──►│  Control plane VM (long-lived)          │
+                    │   FastAPI · SQLite · web UI             │
+                    │   VULTR_API_KEY → create/destroy VMs    │
+                    │   VULTR_INFERENCE_API_KEY → LLM proxy   │
+                    │                                         │
+                    │         │ provision scanner             │
+                    │         ▼                               │
+                    │  Scanner VM (ephemeral, from snapshot)  │
+                    │   cloud-init → runner agent loop        │
+                    │   Docker sandbox · sinkhole · strace    │
+                    │   callbacks → CONTROL_PLANE_URL         │
+                    │   destroyed when scan ends              │
+                    │                                         │
+                    │  Vultr Serverless Inference             │
+                    │   Qwen (codegen) · research models      │
+                    └─────────────────────────────────────────┘
+```
 
-### 2.3 Sandbox (`sandbox/`)
+| Vultr capability | How ToolPain uses it |
+|------------------|----------------------|
+| **Compute (VMs)** | One long-lived **control plane**; one **ephemeral scanner** per scan (or warm-pool members) from a baked snapshot |
+| **Snapshots** | Scanner image with Docker, ToolPain install, and cloud-init entrypoint |
+| **Serverless Inference** | Sole production LLM backend; keys stay on the control plane |
+| **API** | Create/poll/destroy scanners; optional warm pool heartbeats |
 
-- Per-scan Docker internal network `tp_internal_<scan>` subnet `10.66.<n>.0/24`
-- `sinkhole` at `.53`: fake DNS (every name → self), catch-all HTTP/TLS/TCP logger
-- `fixture-site`: static pages for browser-tool probing
-- Decoy workspace planted at `/workspace` (read-only mount)
-- Base images: node, python, playwright
+Local `PROVISIONER=demo|local` exists for offline demos and development. **Hackathon / production path is `PROVISIONER=vultr` + `LLM_MODE=live`.**
 
-### 2.4 Demo (`demo/decoy-trap-server/`)
+---
 
-Deliberately-bad FastMCP server for detection demos. Honest tools plus `fetch_report` that:
+## 3. Agentic flow (the harness loop)
 
-1. Reads only `/workspace/canaries/decoy_secret.txt` (planted by ToolPain)
-2. Attempts a connection only to `collector.sinkhole.local` (in-sandbox sinkhole)
+Each scan is an **agentic pipeline**: observe → generate → run → repair → observe → report.
 
-Never touches real secret paths or real hosts. README omits `fetch_report` so discovery flags it as undocumented.
+```
+Intake (GitHub URL)
+   │
+   ▼
+Provision Vultr scanner VM (or claim warm-pool member)
+   │
+   ▼
+Fetch / clone repository on the scanner
+   │
+   ▼
+┌──────────────────────────────────────────────────────┐
+│  Agent loop (via CP → Vultr Inference)               │
+│                                                      │
+│  Qwen reviews tree + manifests + brief               │
+│       │                                              │
+│       ▼                                              │
+│  Emits executable artifacts (guarded):               │
+│    • setup_sh     — install / build the MCP server   │
+│    • launch_sh    — how to start stdio MCP           │
+│    • probe_py     — safe tool call plans             │
+│    • oracle_py    — post-probe review hooks          │
+│    • workdir_pick — monorepo package selection       │
+│       │                                              │
+│       ▼                                              │
+│  Harness runs artifact → on failure, feeds error     │
+│  back to the model and retries (bounded)             │
+└──────────────────────────────────────────────────────┘
+   │
+   ▼
+Discover tools (docs + static + runtime)
+   │
+   ▼
+Research profiles (LLM) + probe every tool under strace / isolation
+   │
+   ▼
+Analyze (discrepancy, privilege, SoD, egress, decoys)
+   │
+   ▼
+Report + certificate narrative (LLM) → control plane
+   │
+   ▼
+Destroy scanner VM (or release pool member)
+```
 
-## 3. Pipeline stages
+**ToolPain is the harness:** it never lets the model run arbitrary host RCE. Generated shell/Python must pass AST and shell guards; execution happens inside Docker on the scanner VM.
 
-| # | Stage | What happens |
-|---|---|---|
-| 0 | Intake | Validate GitHub URL, create scan record, mint token |
-| 1 | Provision | Create VM / local sandbox / fake replay |
-| 2 | Fetch | Clone repo at ref |
-| 3 | Build | Install deps in networked build container; `docker commit` |
-| 4 | Isolate | Start internal network, sinkhole, fixture-site, plant decoys |
-| 5 | Discover | 4 sources: runtime default, runtime+flags, static, docs |
-| 6 | Research | LLM profile per tool (claimed behavior, resources, risk) |
-| 7 | Probe | Call each tool with safe args; capture strace window |
-| 8 | Analyze | Discrepancy, privilege, SoD, egress, anomalies |
-| 9 | Report | Assemble JSON report; POST to control plane |
-| 10 | Destroy | Tear down containers/network/VM; scrub BYO key |
+**Qwen (codegen)** is the primary model that **reads the repo** and writes bootstrap/setup, launch, probe, and oracle programs so diverse MCP servers can be scanned without a hand-written adapter per language.
 
-## 4. Analysis
+Other Vultr Inference models handle **research profiles** (claimed behavior / risk per tool) and **certificate / findings copy** for IT reviewers.
 
-### 4.1 Four-source discovery
+---
 
-- **D** Docs (README / LLM extraction)
-- **S** Static source scan (regex)
-- **R** Runtime default
-- **F** Runtime with flags
+## 4. Components
 
-Undocumented = present in S/R/F but not D. Hidden-behind-flag = only in F.
+### 4.1 Control plane (`control_plane/`)
 
-### 4.2 Discrepancy types
+Long-lived FastAPI service on Vultr.
 
-`undocumented`, `hidden_behind_flag`, `documented_missing`, `description_mismatch`, `fork_drift`
+- Serves `web/` and the public scan API + SSE
+- Provisions and destroys scanner VMs (`PROVISIONER=vultr`)
+- Optional warm scanner pool
+- **LLM proxy** (`/internal/llm/chat`) — only process that holds `VULTR_INFERENCE_API_KEY`
+- SQLite for scans, events, reports
+- Reaper for orphaned `toolpain-scan-*` instances
 
-### 4.3 Privilege tiers
+### 4.2 Runner (`runner/`)
 
-| Tier | Criteria (any match) |
-|---|---|
-| **critical** | Code exec / eval; arbitrary file write; credential / decoy read; unrestricted network + file read combo; subprocess spawn with shell |
-| **high** | Arbitrary file read; browser automation with navigate+upload; network egress; file upload |
-| **medium** | Scoped file access; PDF/screenshot save; limited network to declared hosts |
-| **low** | Read-only UI actions (click, type, snapshot); no file/net/exec |
-| **info** | Pure metadata / listing tools with no side effects |
+Agent worker on the ephemeral scanner (started by cloud-init).
 
-### 4.4 Toxic combos (SoD)
+Stages: fetch → codegen/build → launch → discover → research → probe → analyze → report.
 
-Pairs that together enable: exfiltration, token theft, credential harvesting, covert channel, capability overlap.
+Posts events and the final report to the control plane with a per-scan token. All model calls go through the CP proxy (keys never land on the scanner as Inference credentials).
 
-### 4.5 Anomalies
+### 4.3 Sandbox (`sandbox/`)
 
-Decoy reads, undeclared egress, subprocess spawns, metadata-endpoint access (`169.254.169.254`), obfuscation, prompt-injection text in tool descriptions.
+Per-scan Docker isolation on the scanner VM:
 
-### 4.6 Verdicts
+- Internal Docker network + **sinkhole** DNS/HTTP/TLS logger
+- Planted **decoy** workspace
+- Optional sidecars for declared dependencies
+- Strace / gVisor tracing correlated to tool calls
 
-| Verdict | When |
-|---|---|
-| `clean` | No high/critical findings; tools match claims |
-| `over_privileged` | Privilege exceeds documentation; no decoy/egress trip |
-| `suspicious` | Undocumented tools, fork drift, or medium anomalies |
-| `flagged` | Decoy read and/or undeclared egress attempt |
+### 4.4 Web UI (`web/`)
 
-Tool-level: `confirmed`, `exceeds_claim`, `not_observed`, `flagged`.
+Intake, live scan progress, findings, access graph, certificate download, least-privilege allowlist.
 
-## 5. Network isolation
+---
 
-- Docker network `--internal`, fixed subnet `10.66.<n>.0/24`
-- Sinkhole `.53` answers every DNS name with its own IP
-- Logs DNS queries, HTTP request lines/headers, TLS SNI; then closes
-- IP-literal outbound has no route; capture from `connect()` in strace
-- Build stage has network; run stage does not
+## 5. Pipeline stages (summary)
 
-## 6. Tracing
+| Stage | Owner | What happens |
+|-------|--------|--------------|
+| Intake | CP | Validate GitHub URL, mint scan token, estimate |
+| Provision | Vultr API | Create or claim scanner VM |
+| Fetch | Runner | Clone repo at ref |
+| Codegen / build | Qwen + harness | Generate and run setup/launch until MCP speaks |
+| Discover | Runner | Docs + static + runtime tool inventory |
+| Research | Inference | Per-tool claimed behavior / risk profiles |
+| Probe | Runner | Call tools; capture files/net/process |
+| Analyze | Runner | Discrepancies, privilege, SoD, anomalies |
+| Report | Runner + Inference | JSON report, IT-facing findings, certificate narrative |
+| Destroy | CP | Tear down VM / release pool |
 
-- **gVisor (`runsc`)**: `--strace` + `--debug-log`
-- **runc**: in-container `strace -f -tt -e trace=file,network,process`
-- Events: `{ts, pid, kind: file|net|proc, detail}`
-- Correlate to tool calls by window `[call_start, call_end + 500ms]`
+---
 
-## 7. LLM (v2: executable codegen)
+## 6. Analysis outcomes
 
-- OpenAI-compatible client: `openai` | `ollama` | `live` (Vultr Inference) via control-plane proxy
-- Runner prefers `/internal/llm/chat` so keys stay on the control plane
-- **Executable artifacts** (AST/shell-guarded), not free host RCE:
-  - `launch_sh` — container entrypoint only
-  - `probe_py` — `build_plans` + optional `next_plans`
-  - `workdir_pick_py` — monorepo package selection
-  - `oracle_py` — `review_observations` → finding dicts
-- Optional `scan_brief` is prompt context only
-- Install/language recipes remain JSON; Dockerfiles stay packaged templates
-- `CODEGEN_MODE=heuristic|off` forces non-LLM artifacts (incident switch)
-- Fake mode / guard failure → heuristic fallback; scan should still complete
+**Discovery sources:** Docs (D), Static (S), Runtime (R), Flags (F).
+
+**Privilege tiers:** critical → info (code exec, credentials, network, scoped file, UI-only, …).
+
+**Verdicts:** `clean` · `over_privileged` · `suspicious` · `flagged` (decoy / undeclared egress).
+
+**Certificate:** PDF/HTML record with business summary, recommendations, integrity hash, and least-privilege config.
+
+---
+
+## 7. Safety
+
+- Scanned MCP server runs only in a container on an ephemeral Vultr VM
+- No production internet from the run network (sinkhole + nftables)
+- Model outputs are data/programs under guards — not unconstrained host shell
+- Inference and Vultr account keys stay on the control plane
+- Scanner destroyed (or pool host wiped of scan state) after each run
+
+---
 
 ## 8. Repository layout
 
 ```
 toolpain/
-  PROMPT.md
-  PROGRESS.md
-  DECISIONS.md
-  BLOCKERS.md
-  STATUS.md
-  README.md
-  Makefile
-  pyproject.toml
-  .env.example
-  docs/ARCHITECTURE.md
-  design/          # static design source (ported into web/)
-  web/             # served by control plane
-  control_plane/   # FastAPI
-  runner/          # scan pipeline
-  sandbox/         # sinkhole, fixture-site, helpers
-  demo/decoy-trap-server/
-  infra/           # cloud-init, nftables, deploy docs
-  data/reports/
+  README.md                 # product overview
+  docs/ARCHITECTURE.md      # this file
+  docs/VULTR_DEPLOY.md      # deploy on Vultr
+  docs/RUNBOOK.md           # scan error codes
+  web/                      # UI
+  control_plane/            # harness control plane
+  runner/                   # agent worker pipeline
+  sandbox/                  # isolation helpers
+  infra/                    # cloud-init, bake, nftables, install
+  demo/                     # contained decoy demo server
   tests/
 ```
 
-## 9. API surface
+---
 
-### Public
+## 9. Related docs
 
-- `POST /api/scans` — body `{repo_url, ref?, byo_vultr_key?}`
-- `GET /api/scans`
-- `GET /api/scans/{id}`
-- `GET /api/scans/{id}/events` — SSE
-- `GET /api/scans/{id}/report`
-
-### Internal (runner)
-
-- `POST /internal/scans/{id}/events` — header `X-Scan-Token`
-- `POST /internal/scans/{id}/report` — header `X-Scan-Token`
-- `POST /internal/llm/chat` — header `X-Scan-Token`
-
-## 10. Safety
-
-- No real secrets in sandbox; only planted decoys
-- BYO Vultr key: process memory only, deleted after destroy; never in DB/logs/SSE
-- Demo trap server targets only decoy path + sinkhole hostname
-- Cap time, memory, pids; read-only root; cap-drop ALL
+- Product / quick start: [`README.md`](../README.md)
+- Deploy on Vultr: [`docs/VULTR_DEPLOY.md`](VULTR_DEPLOY.md)
+- Operator error codes: [`docs/RUNBOOK.md`](RUNBOOK.md)

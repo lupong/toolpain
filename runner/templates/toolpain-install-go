@@ -1,0 +1,29 @@
+#!/bin/sh
+# Allowlisted Go toolchain installer for codegen setup_sh.
+# The LLM script calls: toolpain-install-go 1.27.3
+# Curl stays inside this helper; setup_sh itself may not contain curl.
+set -e
+VER="${1:-}"
+if ! printf '%s' "$VER" | grep -Eq '^1\.[0-9]+(\.[0-9]+)?$'; then
+  echo "toolpain-install-go: need a Go version like 1.24.0 or 1.27.3, got: ${VER:-<empty>}" >&2
+  exit 2
+fi
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64|amd64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *)
+    echo "toolpain-install-go: unsupported arch $ARCH" >&2
+    exit 2
+    ;;
+esac
+URL="https://go.dev/dl/go${VER}.linux-${ARCH}.tar.gz"
+TMP="/tmp/toolpain-go-${VER}.tgz"
+echo "toolpain-install-go: fetching $URL"
+curl -fsSL "$URL" -o "$TMP"
+rm -rf /usr/local/go
+tar -C /usr/local -xzf "$TMP"
+rm -f "$TMP"
+ln -sf /usr/local/go/bin/go /usr/local/bin/go
+ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+go version

@@ -115,15 +115,26 @@ def overall_verdict(
     types = {f["type"] for f in findings}
     if types & ANOMALY_VERDICT_KINDS:
         return "flagged"
+    # Harness-confirmed decoy/egress only — never LLM-oracle copies of the same claim.
+    if any(
+        a.kind in ANOMALY_VERDICT_KINDS and a.severity in {"medium", "high", "critical"}
+        for a in analysis.anomalies
+    ):
+        return "flagged"
     if not tools:
         return "suspicious"
     if tools and all(t.get("verdict") == "not_observed" for t in tools):
         return "suspicious"
     suspicious = {"undocumented_tool", "fork_added_tool", "hidden_behind_flag", "prompt_injection"}
-    medium_anomaly = any(a.severity in {"medium", "high", "critical"} for a in analysis.anomalies)
-    if types & suspicious or medium_anomaly:
+    # Ignore uncorroborated oracle noise if it leaked into findings.
+    material_types = {t for t in types if not str(t).startswith("llm_oracle")}
+    medium_anomaly = any(
+        a.severity in {"medium", "high", "critical"} and a.kind not in ANOMALY_VERDICT_KINDS
+        for a in analysis.anomalies
+    )
+    if material_types & suspicious or medium_anomaly:
         return "suspicious"
-    if any(t["verdict"] == "exceeds_claim" for t in tools) or "description_mismatch" in types:
+    if any(t["verdict"] == "exceeds_claim" for t in tools) or "description_mismatch" in material_types:
         return "over_privileged"
     return "clean"
 
@@ -159,7 +170,11 @@ def _graph(tools: list[dict[str, Any]], analysis: AnalysisResult) -> dict[str, A
             {"data": {"id": f"e{len(edges) + 1}", "source": source, "target": target, "kind": kind}}
         )
 
-    cap_label = {"file_read": "local files", "file_write": "local files", "network": "network"}
+    cap_label = {
+        "file_read": "server filesystem",
+        "file_write": "server filesystem",
+        "network": "network",
+    }
     cap_label |= {"code_exec": "code exec", "shell": "subprocess", "subprocess": "subprocess"}
     cap_label |= {"credential_read": "credentials", "browser": "browser data"}
     for t in tools:
@@ -200,8 +215,16 @@ def build_report(
     findings = _findings(analysis, data)
     verdict = overall_verdict(findings, tool_entries, analysis)
     attempted = [
-        {"host": a.host, "tool": a.tool, "blocked": a.blocked} for a in analysis.egress.attempted
+        {
+            "host": a.host,
+            "tool": a.tool,
+            "blocked": a.blocked,
+            "declared": a.declared,
+        }
+        for a in analysis.egress.attempted
     ]
+    undeclared = [a for a in analysis.egress.attempted if not a.declared]
+    research_profiled = len(data.profiles)
     report: dict[str, Any] = {
         "scan_id": scan_id,
         "repo": {**repo, "fork_drift": analysis.drift},
@@ -211,8 +234,10 @@ def build_report(
             "undocumented": sum(1 for t in data.discovery.tools if t.undocumented),
             "critical_tier": sum(1 for t in tool_entries if t["privilege"] == "critical"),
             "toxic_combos": len(analysis.combos),
-            "egress_attempted": len(attempted),
+            "egress_attempted": len(undeclared),
             "decoy_reads": sum(t["decoy_reads"] for t in tool_entries),
+            "research_profiled": research_profiled,
+            "research_total": len(tool_entries),
         },
         "tools": tool_entries,
         "toxic_combos": [c.model_dump() for c in analysis.combos],

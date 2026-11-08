@@ -1,0 +1,8 @@
+# Packaged scan image. Per-repo adaptation is toolpain_setup.sh, which codegen wrote.
+FROM toolpain-sandbox:trixie
+WORKDIR /app
+COPY . /app
+RUN chmod +x /app/toolpain_setup.sh /app/toolpain_launch.sh
+RUN /bin/sh /app/toolpain_setup.sh
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+CMD ["/bin/sh", "/app/toolpain_launch.sh"]

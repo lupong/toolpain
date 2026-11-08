@@ -1,4 +1,4 @@
-"""M4: FakeSandbox replay (always runs) and Docker containment (``-m docker``)."""
+"""M4: DemoSandbox replay (always runs) and Docker containment (``-m docker``)."""
 
 from __future__ import annotations
 
@@ -9,16 +9,16 @@ from pathlib import Path
 import pytest
 
 from sandbox.decoys import DecoySet
-from sandbox.fake import FakeSandbox
+from sandbox.demo import DemoSandbox
 from sandbox.sandbox import DockerSandbox, safe_id, subnet_octet
 
 # ---------------------------------------------------------------------------
-# FakeSandbox: no Docker needed
+# DemoSandbox: no Docker needed
 # ---------------------------------------------------------------------------
 
 
-async def test_fake_sandbox_replays_fixture_inside_call_window() -> None:
-    async with FakeSandbox("s_fake") as sb:
+async def test_demo_sandbox_replays_fixture_inside_call_window() -> None:
+    async with DemoSandbox("s_demo") as sb:
         assert sb.decoys.paths[0] == "/workspace/canaries/decoy_secret.txt"
         start = time.time()
         sb.on_call_complete("fetch_report", start, start + 1.0)
@@ -35,8 +35,8 @@ async def test_fake_sandbox_replays_fixture_inside_call_window() -> None:
         sb.on_call_complete("unknown_tool", start, start + 1)  # silently ignored
 
 
-async def test_fake_sandbox_stop_removes_workspace() -> None:
-    sb = FakeSandbox("s_fake2")
+async def test_demo_sandbox_stop_removes_workspace() -> None:
+    sb = DemoSandbox("s_demo2")
     await sb.start()
     root = sb.decoys.host_root
     assert (root / "canaries" / "decoy_secret.txt").exists()

@@ -1,1 +1,1 @@
-"""Sandbox helpers: networks, sinkhole, decoys, fake sandbox."""
+"""Sandbox helpers: networks, sinkhole, decoys, demo sandbox."""
