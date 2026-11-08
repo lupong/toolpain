@@ -447,8 +447,7 @@
       var briefEl = $('#scan-brief');
       var payload = {
         repo_url: repo.value.trim().replace(/\/$/, ''),
-        ref: (refEl && refEl.value.trim()) || 'main',
-        protocol: ($('#protocol') && $('#protocol').value) || 'auto'
+        ref: (refEl && refEl.value.trim()) || 'main'
       };
       if (briefEl && briefEl.value.trim()) payload.scan_brief = briefEl.value.trim().slice(0, 2000);
       var ticketEl = $('#ticket');
@@ -459,8 +458,6 @@
       if (packagePick && packagePick.value) {
         payload.prefer_subdir = packagePick.value.replace(/^\/+|\/+$/g, '');
       }
-      var mcpEl = $('#mcp-url');
-      if (mcpEl && mcpEl.value.trim()) payload.mcp_url = mcpEl.value.trim();
       var byoOn = toggle.getAttribute('aria-pressed') === 'true';
       var vkey = $('#vkey');
       if (byoOn && vkey && vkey.value) payload.byo_vultr_key = vkey.value;

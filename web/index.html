@@ -111,15 +111,6 @@
         <summary>Advanced <span class="tp-eyebrow" id="account-mode" style="margin-left:auto;margin-right:8px">toolpain account</span></summary>
         <div class="tp-disclosure__body">
           <div class="tp-field">
-            <label for="protocol" class="tp-label">Protocol <span class="tp-label__hint">(optional)</span></label>
-            <select id="protocol" name="protocol" class="tp-input">
-              <option value="auto">auto</option>
-              <option value="stdio">stdio</option>
-              <option value="http">http</option>
-              <option value="sse">sse</option>
-            </select>
-          </div>
-          <div class="tp-field">
             <label for="scan-brief" class="tp-label">Scan brief <span class="tp-label__hint">(optional)</span></label>
             <textarea id="scan-brief" name="scan_brief" class="tp-input" rows="2" maxlength="2000"
                       placeholder="e.g. Focus on file-read tools; ignore admin helpers"
@@ -130,11 +121,6 @@
             <label for="prefer-subdir" class="tp-label">Server subdirectory <span class="tp-label__hint">(optional — skips auto-pick)</span></label>
             <input id="prefer-subdir" name="prefer_subdir" class="tp-input" type="text" placeholder="src/filesystem" autocomplete="off" spellcheck="false">
             <p class="tp-help">Exact path to one MCP server in a multi-server repo (e.g. <code>src/filesystem</code> or <code>servers/Example.Mcp.Server</code>).</p>
-          </div>
-          <div class="tp-field">
-            <label for="mcp-url" class="tp-label">Existing MCP URL <span class="tp-label__hint">(optional)</span></label>
-            <input id="mcp-url" name="mcp_url" class="tp-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:3000/mcp">
-            <p class="tp-help">Scan an already-running HTTP or SSE server. Localhost HTTP, or public HTTPS. Private and metadata hosts are rejected.</p>
           </div>
           <div class="tp-row" style="justify-content:space-between;flex-wrap:nowrap;gap:16px">
             <div>
