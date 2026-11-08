@@ -1121,6 +1121,11 @@ def app_js() -> FileResponse:
     return _web_or_design("app.js")
 
 
+@app.get("/favicon.svg")
+def favicon() -> FileResponse:
+    return _web_or_design("favicon.svg")
+
+
 @app.exception_handler(ValidationError)
 async def validation_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": exc.errors()})

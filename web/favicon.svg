@@ -1,11 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ToolPain">
-  <rect width="32" height="32" rx="7" fill="#0B0D10"/>
-  <path
-    d="M4 18h4l3-8 4 13 3-9 2 4h4"
-    fill="none"
-    stroke="#FF5A36"
-    stroke-width="2.4"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
+  <!-- Same mark as the wordmark: pulse path from #i-logo on the raised tile. -->
+  <rect width="32" height="32" rx="8" fill="#12161B" stroke="#2A323C" stroke-width="1"/>
+  <g transform="translate(4 4)" fill="none" stroke="#FF5A36" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 14h4l3-8 4 13 3-9 2 4h4"/>
+  </g>
 </svg>
