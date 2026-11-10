@@ -4,7 +4,9 @@
 
 ToolPain is a **security harness for MCP servers**. Paste a GitHub link; ToolPain runs an **agentic scan on Vultr**: ephemeral compute, Vultr Inference (Qwen) reviews the repo and generates bootstrap/probe programs, the harness executes them in isolation, and you get a runtime proof of what each tool really does versus what it claims.
 
-Live: [toolpain.com](https://toolpain.com) · Source: [github.com/lupong/toolpain](https://github.com/lupong/toolpain)
+Source: [github.com/lupong/toolpain](https://github.com/lupong/toolpain) · Slides: [`docs/ToolPain_Vultr_Agent_Rush_submission.pdf`](docs/ToolPain_Vultr_Agent_Rush_submission.pdf)
+
+> **Status (Nov 2026):** The Vultr: Agent Rush hackathon demo is over. **[toolpain.com](https://toolpain.com) is no longer running** — Vultr control-plane and scanner infra have been torn down. Run locally with the Quick start below, or redeploy with [`docs/VULTR_DEPLOY.md`](docs/VULTR_DEPLOY.md).
 
 ---
 
@@ -40,7 +42,7 @@ Browser ──HTTPS──► Control plane VM (Vultr)
                                   Qwen codegen · research · certificate copy
 ```
 
-**Control plane** (`control_plane/`) — long-lived Vultr VM behind [toolpain.com](https://toolpain.com). Serves the UI and scan API, holds Vultr + Inference credentials, proxies every model call so keys never land on scanners, and provisions compute.
+**Control plane** (`control_plane/`) — long-lived Vultr VM (was public at toolpain.com during the hackathon). Serves the UI and scan API, holds Vultr + Inference credentials, proxies every model call so keys never land on scanners, and provisions compute.
 
 **Scanner** (`runner/` + `sandbox/`) — ephemeral Vultr VM (or warm-pool member). Cloud-init starts the agent worker: clone → codegen/build → launch MCP → discover tools → research → probe under isolation → analyze → report → tear down.
 
@@ -66,7 +68,7 @@ The agent is not a conversational assistant. It is a **bounded agent loop on Vul
 
 **Safety of the agent:** model outputs are data/programs under AST and shell guards — not unconstrained host RCE. Execution happens only in containers on ephemeral Vultr scanners. Inference and account keys stay on the control plane.
 
-Try the three demos on the live site (clean / powerful / flagged) — each starts a real Vultr scan of that server.
+The three demos (clean / powerful / flagged) each started a real Vultr scan when the site was live. Locally, use **Quick start** and the decoy-trap-server chip under `PROVISIONER=demo`.
 
 ---
 
@@ -84,6 +86,7 @@ Try the three demos on the live site (clean / powerful / flagged) — each start
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Harness, agentic flow, Vultr, Qwen |
 | [`docs/VULTR_DEPLOY.md`](docs/VULTR_DEPLOY.md) | Bake snapshot, CP, smoke scan |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Scan error codes for operators |
+| [`docs/ToolPain_Vultr_Agent_Rush_submission.pdf`](docs/ToolPain_Vultr_Agent_Rush_submission.pdf) | Hackathon slide deck |
 
 ## Quick start (offline demo)
 
